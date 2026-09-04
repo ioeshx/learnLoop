@@ -2,7 +2,7 @@
 
 LearnLoop 是一个本地优先的自适应学习 Agent。
 
-当前仓库处于基础架构阶段，仅建立项目目录、模块边界和运行时数据约定，暂未包含具体业务实现。
+当前仓库正在按照 `docs/implementation-roadmap.md` 分阶段实现。
 
 ## 技术方向
 
@@ -23,3 +23,34 @@ scripts/    跨平台开发和维护脚本
 docs/       架构、决策、API 和评测文档
 ```
 
+## 开发环境
+
+- Python 3.12 或 3.13
+- uv
+- Node.js 22 或更新的 LTS/Current 版本
+- Corepack 与 pnpm 11
+
+安装依赖：
+
+```text
+cd backend
+uv sync
+
+cd ../frontend
+corepack pnpm install
+```
+
+启动前后端：
+
+```text
+uv run python scripts/dev.py
+```
+
+单独启动后端或前端：
+
+```text
+uv run python scripts/dev.py --backend-only
+uv run python scripts/dev.py --frontend-only
+```
+
+后端健康检查地址为 `http://127.0.0.1:8000/api/v1/health`，前端默认地址为 `http://127.0.0.1:3000`。

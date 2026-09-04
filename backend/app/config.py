@@ -1,0 +1,69 @@
+"""Application configuration loaded from environment variables."""
+
+from functools import lru_cache
+from pathlib import Path
+from typing import Literal
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+class Settings(BaseSettings):
+    """Typed LearnLoop settings.
+
+    Environment variables use the ``LEARNLOOP_`` prefix. A root ``.env`` file
+    is supported for local development, while real environment variables take
+    precedence.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=PROJECT_ROOT / ".env",
+        env_prefix="LEARNLOOP_",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    app_name: str = "LearnLoop API"
+    app_version: str = "0.1.0"
+    environment: Literal["development", "test", "production"] = "development"
+    debug: bool = False
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    api_prefix: str = "/api/v1"
+    host: str = "127.0.0.1"
+    port: int = Field(default=8000, ge=1, le=65535)
+    data_dir: Path = PROJECT_ROOT / "data"
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["http://127.0.0.1:3000", "http://localhost:3000"]
+    )
+
+    @field_validator("api_prefix")
+    @classmethod
+    def validate_api_prefix(cls, value: str) -> str:
+        if not value.startswith("/"):
+            raise ValueError("api_prefix must start with '/'")
+        return value.rstrip("/")
+
+    @field_validator("data_dir", mode="before")
+    @classmethod
+    def reject_empty_data_dir(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("data_dir must not be empty")
+        return value
+
+    @property
+    def database_dir(self) -> Path:
+        return self.data_dir / "db"
+
+    def ensure_runtime_directories(self) -> None:
+        """Create only the runtime directories required at application boot."""
+        self.database_dir.mkdir(parents=True, exist_ok=True)
+        (self.data_dir / "logs").mkdir(parents=True, exist_ok=True)
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Return the process-wide immutable settings instance."""
+    return Settings()
