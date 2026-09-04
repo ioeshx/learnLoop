@@ -14,5 +14,12 @@ evals/               Agent 评测数据、评测器和报告
 tests/               后端测试
 ```
 
-依赖清单和应用入口将在后端初始化阶段生成。
+数据库迁移由仓库根目录下的跨平台脚本执行：
 
+```text
+uv run --project backend python scripts/migrate.py upgrade
+uv run --project backend python scripts/migrate.py current
+uv run --project backend python scripts/migrate.py downgrade -1
+```
+
+迁移不会在 API 启动时隐式执行，避免应用启动过程修改未知版本的数据库。

@@ -40,6 +40,12 @@ cd ../frontend
 corepack pnpm install
 ```
 
+初始化或升级本地 SQLite 数据库：
+
+```text
+uv run --project backend python scripts/migrate.py upgrade
+```
+
 启动前后端：
 
 ```text
@@ -54,3 +60,12 @@ uv run python scripts/dev.py --frontend-only
 ```
 
 后端健康检查地址为 `http://127.0.0.1:8000/api/v1/health`，前端默认地址为 `http://127.0.0.1:3000`。
+
+后端质量检查：
+
+```text
+cd backend
+uv run pytest
+uv run ruff check .
+uv run mypy app
+```

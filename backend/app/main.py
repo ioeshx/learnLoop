@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.config import Settings, get_settings
 from app.errors import register_error_handlers
+from app.infrastructure.database import create_database
 from app.logging import configure_logging
 
 
@@ -18,9 +19,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging(resolved_settings.log_level)
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        resolved_settings.ensure_runtime_directories()
-        yield
+    async def lifespan(lifespan_app: FastAPI) -> AsyncIterator[None]:
+        database = create_database(resolved_settings)
+        lifespan_app.state.database = database
+        try:
+            yield
+        finally:
+            await database.dispose()
 
     app = FastAPI(
         title=resolved_settings.app_name,

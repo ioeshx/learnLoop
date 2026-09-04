@@ -53,9 +53,24 @@ class Settings(BaseSettings):
             raise ValueError("data_dir must not be empty")
         return value
 
+    @field_validator("data_dir")
+    @classmethod
+    def resolve_data_dir(cls, value: Path) -> Path:
+        if value.is_absolute():
+            return value
+        return (PROJECT_ROOT / value).resolve()
+
     @property
     def database_dir(self) -> Path:
         return self.data_dir / "db"
+
+    @property
+    def database_path(self) -> Path:
+        return self.database_dir / "learnloop.db"
+
+    @property
+    def database_url(self) -> str:
+        return f"sqlite+aiosqlite:///{self.database_path.as_posix()}"
 
     def ensure_runtime_directories(self) -> None:
         """Create only the runtime directories required at application boot."""
