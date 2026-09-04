@@ -1,0 +1,2 @@
+"""SQLite migration command placeholder."""
+
