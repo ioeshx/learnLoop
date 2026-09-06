@@ -4,10 +4,10 @@ LearnLoop 是一个本地优先、跨平台的自适应学习 Agent 项目。项
 Next.js 提供 Web 界面，FastAPI 提供后端 API，并使用 SQLite 在本地保存学习目标、
 知识点、学习计划、练习、掌握度和复习计划。
 
-目前已经完成开发路线中的阶段一至阶段三：工程基础、SQLite 领域模型，以及不依赖
-LLM 的端到端学习闭环。用户可以创建目标、生成确定性计划、完成课程和练习，并在
-刷新页面后继续查看保存在 SQLite 中的作答结果、掌握度与复习时间。LangGraph 与
-LLM 生成能力将在后续阶段接入。
+目前已经完成开发路线中的阶段一至阶段四：工程基础、SQLite 领域模型、端到端学习
+闭环，以及可选的 LLM 结构化内容生成。用户可以创建目标、生成计划、完成课程和
+练习，并在刷新页面后继续查看保存在 SQLite 中的作答结果、掌握度与复习时间。
+LangGraph 工作流将在后续阶段接入。
 
 ## 当前能力
 
@@ -16,7 +16,11 @@ LLM 生成能力将在后续阶段接入。
 - SQLite 异步访问、Alembic 迁移和 Unit of Work 事务边界。
 - 学习目标、知识图、学习计划、练习、掌握度和复习领域模型。
 - 知识依赖环检测、客观题确定性判分和 FSRS 复习调度。
-- 无 LLM 的固定课程模板，以及完整的 Application Service 编排层。
+- 无 LLM 的固定课程回退，以及完整的 Application Service 编排层。
+- 8 个 Pydantic 结构化输出契约和 6 个带版本的 Prompt。
+- 可替换的模型 Provider、Fake Provider 和 DeepSeek Provider。
+- 最多一次输出修复、瞬时错误重试、超时控制和 Token 统计。
+- LLM 生成的知识图、计划、讲解和练习必须经过领域规则才能持久化。
 - 创建目标、获取计划、开始学习、提交答案、完成学习和查询复习的 REST API。
 - 创建目标、学习计划、学习会话和作答结果四个可刷新恢复的前端页面。
 - 请求幂等、事务回滚、领域测试、API 契约测试和前端 API 测试。
@@ -68,11 +72,26 @@ Copy-Item frontend/.env.example frontend/.env.local
 ```dotenv
 LEARNLOOP_ENVIRONMENT=development
 LEARNLOOP_DATA_DIR=./data
+LEARNLOOP_LLM_PROVIDER=none
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000/api/v1
 ```
 
-SQLite 数据库默认创建在 `data/db/learnloop.db`。当前阶段不需要填写 LLM 或
-Embedding API Key。
+SQLite 数据库默认创建在 `data/db/learnloop.db`。保持 `LEARNLOOP_LLM_PROVIDER=none`
+时不需要任何模型密钥，系统使用固定课程模板。
+
+如需让 DeepSeek 生成知识图、计划、讲解和练习，在 `.env` 中配置：
+
+```dotenv
+LEARNLOOP_LLM_PROVIDER=deepseek
+LEARNLOOP_LLM_MODEL=deepseek-v4-flash
+LEARNLOOP_LLM_API_KEY=替换为你的密钥
+LEARNLOOP_LLM_BASE_URL=https://api.deepseek.com
+LEARNLOOP_LLM_TIMEOUT_SECONDS=60
+LEARNLOOP_LLM_MAX_RETRIES=2
+```
+
+模型生成在创建计划时发生。已生成过计划的目标会直接返回已有计划，不会重复调用
+模型。Embedding 在当前阶段仍未启用。
 
 ## 方式一：使用 uv 运行
 
@@ -158,7 +177,7 @@ python -m pip install -e ./backend
 如果还需要执行测试、代码检查和类型检查，请额外安装开发依赖：
 
 ```bash
-python -m pip install httpx mypy pytest pytest-asyncio ruff
+python -m pip install mypy pytest pytest-asyncio ruff
 ```
 
 ### 3. 安装前端依赖
@@ -216,13 +235,14 @@ corepack pnpm dev
 
 ## 当前学习流程
 
-打开前端首页后，可以完整体验以下无 LLM 闭环：
+打开前端首页后，可以完整体验以下学习闭环。计划、讲解和练习由当前配置的
+DeepSeek 模型生成；未配置模型时使用确定性模板：
 
 ```text
 创建学习目标
-→ 生成固定的三阶段学习计划
+→ 生成结构化学习计划
 → 选择计划项并开始学习
-→ 阅读固定讲解并完成选择题
+→ 阅读讲解并完成选择题
 → 查看判分、掌握度和下次复习时间
 → 完成学习会话
 ```

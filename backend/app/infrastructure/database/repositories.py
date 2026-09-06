@@ -98,6 +98,7 @@ class SqlAlchemyKnowledgeRepository:
                 goal_id=node.goal_id,
                 title=node.title,
                 description=node.description,
+                lesson_content=node.lesson_content,
                 difficulty=node.difficulty,
                 created_at=node.created_at,
             )
@@ -431,6 +432,7 @@ def _knowledge_node_from_model(model: KnowledgeNodeModel) -> KnowledgeNode:
         description=model.description,
         difficulty=model.difficulty,
         created_at=model.created_at,
+        lesson_content=model.lesson_content,
     )
 
 

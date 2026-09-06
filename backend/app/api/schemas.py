@@ -151,7 +151,10 @@ class SessionResponse(BaseModel):
             started_at=details.session.started_at,
             completed_at=details.session.completed_at,
             lesson_title=details.knowledge_node.title,
-            lesson_content=details.knowledge_node.description,
+            lesson_content=(
+                details.knowledge_node.lesson_content
+                or details.knowledge_node.description
+            ),
             exercise=ExerciseResponse(
                 id=exercise.id,
                 exercise_type=exercise.exercise_type.value,

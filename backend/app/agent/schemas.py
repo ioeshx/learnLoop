@@ -32,8 +32,8 @@ class KnowledgeEdgeProposal(AgentOutput):
 
 
 class KnowledgeGraphProposal(AgentOutput):
-    nodes: list[KnowledgeNodeProposal] = Field(min_length=1, max_length=20)
-    edges: list[KnowledgeEdgeProposal] = Field(default_factory=list, max_length=60)
+    nodes: list[KnowledgeNodeProposal] = Field(min_length=1, max_length=8)
+    edges: list[KnowledgeEdgeProposal] = Field(default_factory=list, max_length=24)
 
     @model_validator(mode="after")
     def validate_references(self) -> Self:
@@ -64,7 +64,7 @@ class StudyPlanItemProposal(AgentOutput):
 class StudyPlanProposal(AgentOutput):
     title: str = Field(min_length=1, max_length=300)
     rationale: str = Field(min_length=1, max_length=2_000)
-    items: list[StudyPlanItemProposal] = Field(min_length=1, max_length=20)
+    items: list[StudyPlanItemProposal] = Field(min_length=1, max_length=8)
 
     @model_validator(mode="after")
     def validate_unique_items(self) -> Self:

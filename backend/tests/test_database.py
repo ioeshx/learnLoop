@@ -78,7 +78,12 @@ async def test_repositories_persist_a_complete_plan(database: Database) -> None:
         weekly_minutes=180,
         now=NOW,
     )
-    basics = KnowledgeNode.create(goal_id=goal.id, title="Basics", now=NOW)
+    basics = KnowledgeNode.create(
+        goal_id=goal.id,
+        title="Basics",
+        lesson_content="A generated introduction.",
+        now=NOW,
+    )
     traversal = KnowledgeNode.create(goal_id=goal.id, title="Traversal", now=NOW)
     edge = KnowledgeEdge.create(
         goal_id=goal.id,
@@ -111,6 +116,7 @@ async def test_repositories_persist_a_complete_plan(database: Database) -> None:
 
     assert saved_goal == goal
     assert {node.id for node in saved_nodes} == {basics.id, traversal.id}
+    assert next(node for node in saved_nodes if node.id == basics.id) == basics
     assert saved_plan == plan
 
 

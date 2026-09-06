@@ -21,3 +21,10 @@ class NotFoundError(ApplicationError):
 class ConflictError(ApplicationError):
     def __init__(self, message: str) -> None:
         super().__init__(code="conflict", message=message, status_code=409)
+
+
+class CurriculumGenerationError(ApplicationError):
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            code="curriculum_generation_failed", message=message, status_code=502
+        )

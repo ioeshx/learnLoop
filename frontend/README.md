@@ -1,7 +1,8 @@
 # Frontend
 
-LearnLoop 的 Next.js、React 和 TypeScript Web 客户端。当前实现无 LLM 学习闭环的
-四个页面：创建目标、查看计划、完成学习和查看作答结果。
+LearnLoop 的 Next.js、React 和 TypeScript Web 客户端。当前实现学习闭环的四个
+页面：创建目标、查看计划、完成学习和查看作答结果。内容来自后端配置的确定性模板
+或 LLM Provider，前端不直接持有模型密钥。
 
 ```text
 src/app/         路由、布局和页面

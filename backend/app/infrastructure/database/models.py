@@ -69,6 +69,7 @@ class KnowledgeNodeModel(Base):
     )
     title: Mapped[str] = mapped_column(String(300))
     description: Mapped[str] = mapped_column(Text, default="")
+    lesson_content: Mapped[str] = mapped_column(Text, default="", server_default="")
     difficulty: Mapped[float] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime())
 

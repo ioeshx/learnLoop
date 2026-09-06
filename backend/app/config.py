@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://127.0.0.1:3000", "http://localhost:3000"]
     )
+    llm_provider: Literal["none", "deepseek"] = "none"
+    llm_model: str = "deepseek-v4-flash"
+    llm_api_key: SecretStr | None = None
+    llm_base_url: str = "https://api.deepseek.com"
+    llm_timeout_seconds: float = Field(default=60.0, gt=0, le=600)
+    llm_max_retries: int = Field(default=2, ge=0, le=5)
 
     @field_validator("api_prefix")
     @classmethod
@@ -58,6 +64,30 @@ class Settings(BaseSettings):
         if value.is_absolute():
             return value
         return (PROJECT_ROOT / value).resolve()
+
+    @field_validator("llm_model")
+    @classmethod
+    def validate_llm_model(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("llm_model must not be empty")
+        return normalized
+
+    @field_validator("llm_base_url")
+    @classmethod
+    def validate_llm_base_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        if not normalized.startswith(("https://", "http://")):
+            raise ValueError("llm_base_url must be an HTTP(S) URL")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_llm_credentials(self) -> "Settings":
+        if self.llm_provider == "deepseek" and (
+            self.llm_api_key is None or not self.llm_api_key.get_secret_value().strip()
+        ):
+            raise ValueError("llm_api_key is required when llm_provider is 'deepseek'")
+        return self
 
     @property
     def database_dir(self) -> Path:

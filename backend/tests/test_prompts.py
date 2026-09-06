@@ -19,4 +19,5 @@ def test_every_prompt_renders_its_test_sample() -> None:
 
         assert rendered.system
         assert rendered.user
-        assert "{" not in rendered.user or "}" in rendered.user
+        for field_name in prompt.input_schema.model_fields:
+            assert f"{{{field_name}}}" not in rendered.user

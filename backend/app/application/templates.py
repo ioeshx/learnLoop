@@ -2,20 +2,14 @@
 
 from datetime import datetime
 
+from app.application.curriculum import Curriculum
 from app.domain.exercises import Exercise
 from app.domain.goals import LearningGoal
 from app.domain.knowledge import KnowledgeEdge, KnowledgeNode
 from app.domain.plans import StudyPlan
 
 
-def build_fixed_curriculum(
-    goal: LearningGoal, *, now: datetime
-) -> tuple[
-    tuple[KnowledgeNode, ...],
-    tuple[KnowledgeEdge, ...],
-    StudyPlan,
-    tuple[Exercise, ...],
-]:
+def build_fixed_curriculum(goal: LearningGoal, *, now: datetime) -> Curriculum:
     specs = (
         (
             f"{goal.title}：基础与边界",
@@ -92,4 +86,9 @@ def build_fixed_curriculum(
             nodes, specs, strict=True
         )
     )
-    return nodes, edges, plan, exercises
+    return Curriculum(nodes=nodes, edges=edges, plan=plan, exercises=exercises)
+
+
+class FixedCurriculumGenerator:
+    async def generate(self, goal: LearningGoal, *, now: datetime) -> Curriculum:
+        return build_fixed_curriculum(goal, now=now)

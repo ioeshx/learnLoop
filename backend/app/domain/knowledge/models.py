@@ -21,9 +21,11 @@ class KnowledgeNode:
     description: str
     difficulty: float
     created_at: datetime
+    lesson_content: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "title", require_text(self.title, "title"))
+        object.__setattr__(self, "lesson_content", self.lesson_content.strip())
         if not 1.0 <= self.difficulty <= 5.0:
             raise ValueError("difficulty must be between 1.0 and 5.0")
         require_aware_utc(self.created_at, "created_at")
@@ -36,6 +38,7 @@ class KnowledgeNode:
         title: str,
         description: str = "",
         difficulty: float = 1.0,
+        lesson_content: str = "",
         now: datetime | None = None,
     ) -> "KnowledgeNode":
         return cls(
@@ -45,6 +48,7 @@ class KnowledgeNode:
             description=description.strip(),
             difficulty=difficulty,
             created_at=require_aware_utc(now or utc_now(), "now"),
+            lesson_content=lesson_content,
         )
 
 

@@ -47,6 +47,6 @@ def test_upgrade_creates_the_initial_schema(tmp_path: Path) -> None:
         busy_timeout = connection.execute("PRAGMA busy_timeout").fetchone()
 
     assert {row[0] for row in table_rows} >= EXPECTED_TABLES
-    assert version == ("0002_attempt_idempotency",)
+    assert version == ("0003_lesson_content",)
     assert journal_mode == ("wal",)
     assert busy_timeout == (5000,)

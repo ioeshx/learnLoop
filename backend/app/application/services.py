@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
+from app.application.curriculum import CurriculumGenerator
 from app.application.errors import ConflictError, NotFoundError
 from app.application.models import (
     AttemptResult,
@@ -15,7 +16,7 @@ from app.application.models import (
     SubmitAttemptCommand,
 )
 from app.application.ports import UnitOfWork, UnitOfWorkFactory
-from app.application.templates import build_fixed_curriculum
+from app.application.templates import FixedCurriculumGenerator
 from app.domain.common import deterministic_id, utc_now
 from app.domain.exercises import Exercise, ExerciseAttempt, grade_multiple_choice
 from app.domain.goals import GoalStatus, LearningGoal
@@ -40,6 +41,7 @@ class ApplicationDependencies:
     uow_factory: UnitOfWorkFactory
     review_scheduler: ReviewScheduler
     clock: Callable[[], datetime] = utc_now
+    curriculum_generator: CurriculumGenerator | None = None
 
 
 async def _ensure_default_user(uow: UnitOfWork, now: datetime) -> User:
@@ -170,18 +172,32 @@ class CreateStudyPlan:
             if existing:
                 return await _get_plan_details(uow, existing[-1])
 
-            nodes, edges, plan, exercises = build_fixed_curriculum(goal, now=now)
-            for node in nodes:
+        generator = (
+            self._dependencies.curriculum_generator or FixedCurriculumGenerator()
+        )
+        curriculum = await generator.generate(goal, now=now)
+
+        async with self._dependencies.uow_factory() as uow:
+            persisted_goal = await uow.goals.get(goal_id)
+            if persisted_goal is None:
+                raise NotFoundError("learning goal", goal_id)
+            existing = await uow.plans.list_for_goal(goal_id)
+            if existing:
+                return await _get_plan_details(uow, existing[-1])
+
+            for node in curriculum.nodes:
                 await uow.knowledge.add_node(node)
-            for edge in edges:
+            for edge in curriculum.edges:
                 await uow.knowledge.add_edge(edge)
-            await uow.plans.add(plan)
-            for exercise in exercises:
+            await uow.plans.add(curriculum.plan)
+            for exercise in curriculum.exercises:
                 await uow.exercises.add(exercise)
-            if goal.status == GoalStatus.DRAFT:
-                await uow.goals.update(goal.change_status(GoalStatus.ACTIVE, now=now))
+            if persisted_goal.status == GoalStatus.DRAFT:
+                await uow.goals.update(
+                    persisted_goal.change_status(GoalStatus.ACTIVE, now=now)
+                )
             await uow.commit()
-            return PlanDetails(plan=plan, nodes=nodes)
+            return await _get_plan_details(uow, curriculum.plan)
 
 
 class GetStudyPlan:

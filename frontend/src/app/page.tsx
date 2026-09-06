@@ -50,11 +50,11 @@ export default function Home() {
 
       <section className="split-layout">
         <div className="intro-panel">
-          <p className="eyebrow">DETERMINISTIC LEARNING LOOP</p>
+          <p className="eyebrow">STRUCTURED LEARNING LOOP</p>
           <h1>把目标变成一次可以完成的学习。</h1>
           <p className="subtitle">
-            当前版本不调用 LLM。它会根据你的目标生成一套固定但完整的三阶段计划，
-            让你体验目标、讲解、练习、掌握度和复习排期组成的闭环。
+            它会根据你的目标生成一套经过结构化校验的学习计划；未配置模型时自动
+            使用固定模板。每次学习都包含讲解、练习、掌握度和复习排期。
           </p>
           <ol className="flow-list">
             <li>定义你想获得的能力</li>
@@ -118,7 +118,7 @@ export default function Home() {
 
           {error ? <p className="error-banner">{error}</p> : null}
           <button className="primary-button" disabled={submitting} type="submit">
-            {submitting ? "正在创建学习路径…" : "生成固定学习计划"}
+            {submitting ? "正在创建学习路径…" : "生成学习计划"}
           </button>
         </form>
       </section>

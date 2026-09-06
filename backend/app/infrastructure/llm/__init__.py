@@ -1,5 +1,6 @@
 """Model provider adapters and structured generation utilities."""
 
+from app.infrastructure.llm.curriculum import LlmCurriculumGenerator
 from app.infrastructure.llm.deepseek import DeepSeekModelProvider
 from app.infrastructure.llm.errors import (
     ModelError,
@@ -22,6 +23,7 @@ __all__ = [
     "DeepSeekModelProvider",
     "FakeModelProvider",
     "FakeOutput",
+    "LlmCurriculumGenerator",
     "ModelError",
     "ModelMessage",
     "ModelProvider",

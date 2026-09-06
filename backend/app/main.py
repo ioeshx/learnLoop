@@ -1,6 +1,6 @@
 """LearnLoop API application entry point."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -11,6 +11,12 @@ from app.application import ApplicationDependencies
 from app.config import Settings, get_settings
 from app.errors import register_error_handlers
 from app.infrastructure.database import SqlAlchemyUnitOfWork, create_database
+from app.infrastructure.llm import (
+    DeepSeekModelProvider,
+    LlmCurriculumGenerator,
+    ModelProvider,
+    StructuredModel,
+)
 from app.infrastructure.review import FsrsReviewScheduler
 from app.logging import configure_logging
 
@@ -21,16 +27,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging(resolved_settings.log_level)
 
     @asynccontextmanager
-    async def lifespan(lifespan_app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(lifespan_app: FastAPI) -> AsyncGenerator[None, None]:
         database = create_database(resolved_settings)
+        model_provider: ModelProvider | None = None
+        curriculum_generator = None
+        if resolved_settings.llm_provider == "deepseek":
+            api_key = resolved_settings.llm_api_key
+            if api_key is None:
+                raise RuntimeError("validated DeepSeek API key is missing")
+            model_provider = DeepSeekModelProvider(
+                api_key=api_key.get_secret_value(),
+                model=resolved_settings.llm_model,
+                base_url=resolved_settings.llm_base_url,
+                timeout_seconds=resolved_settings.llm_timeout_seconds,
+                max_retries=resolved_settings.llm_max_retries,
+            )
+            curriculum_generator = LlmCurriculumGenerator(
+                StructuredModel(model_provider)
+            )
         lifespan_app.state.database = database
+        lifespan_app.state.model_provider = model_provider
         lifespan_app.state.application_dependencies = ApplicationDependencies(
             uow_factory=lambda: SqlAlchemyUnitOfWork(database.session_factory),
             review_scheduler=FsrsReviewScheduler(),
+            curriculum_generator=curriculum_generator,
         )
         try:
             yield
         finally:
+            if model_provider is not None:
+                await model_provider.aclose()
             await database.dispose()
 
     app = FastAPI(

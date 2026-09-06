@@ -1,5 +1,7 @@
 """Application use cases and orchestration."""
 
+from app.application.curriculum import Curriculum, CurriculumGenerator
+from app.application.errors import CurriculumGenerationError
 from app.application.models import (
     AttemptResult,
     CreateGoalCommand,
@@ -21,6 +23,7 @@ from app.application.services import (
     StartStudySession,
     SubmitExerciseAttempt,
 )
+from app.application.templates import FixedCurriculumGenerator
 
 __all__ = [
     "ApplicationDependencies",
@@ -29,7 +32,11 @@ __all__ = [
     "CreateGoalCommand",
     "CreateLearningGoal",
     "CreateStudyPlan",
+    "Curriculum",
+    "CurriculumGenerationError",
+    "CurriculumGenerator",
     "DueReview",
+    "FixedCurriculumGenerator",
     "GetDueReviews",
     "GetLearningGoal",
     "GetStudyPlan",
