@@ -4,10 +4,10 @@ LearnLoop 是一个本地优先、跨平台的自适应学习 Agent 项目。项
 Next.js 提供 Web 界面，FastAPI 提供后端 API，并使用 SQLite 在本地保存学习目标、
 知识点、学习计划、练习、掌握度和复习计划。
 
-目前已经完成开发路线中的阶段一至阶段四：工程基础、SQLite 领域模型、端到端学习
-闭环，以及可选的 LLM 结构化内容生成。用户可以创建目标、生成计划、完成课程和
-练习，并在刷新页面后继续查看保存在 SQLite 中的作答结果、掌握度与复习时间。
-LangGraph 工作流将在后续阶段接入。
+目前已经完成开发路线中的阶段一至阶段六：工程基础、SQLite 领域模型、端到端学习
+闭环、可选的 LLM 结构化内容生成、LangGraph 核心工作流，以及可恢复的
+Checkpoint / Interrupt / SSE。用户可以创建目标、生成计划、完成课程和练习；Agent
+可以在等待作答、评分确认和计划审批时暂停，并在刷新页面或应用重启后继续。
 
 ## 当前能力
 
@@ -21,6 +21,10 @@ LangGraph 工作流将在后续阶段接入。
 - 可替换的模型 Provider、Fake Provider 和 DeepSeek Provider。
 - 最多一次输出修复、瞬时错误重试、超时控制和 Token 统计。
 - LLM 生成的知识图、计划、讲解和练习必须经过领域规则才能持久化。
+- LangGraph 每日学习图和目标规划图，以及有界的错误补救循环。
+- SQLite `AsyncSqliteSaver`、稳定的 Run/Thread 映射和跨进程 Interrupt 恢复。
+- 作答、评分纠正、计划批准/编辑与资料歧义确认的人机协作节点。
+- 可持久化重放的节点、Tool 与运行事件，以及支持断线续传的 SSE API。
 - 创建目标、获取计划、开始学习、提交答案、完成学习和查询复习的 REST API。
 - 创建目标、学习计划、学习会话和作答结果四个可刷新恢复的前端页面。
 - 请求幂等、事务回滚、领域测试、API 契约测试和前端 API 测试。
@@ -73,11 +77,13 @@ Copy-Item frontend/.env.example frontend/.env.local
 LEARNLOOP_ENVIRONMENT=development
 LEARNLOOP_DATA_DIR=./data
 LEARNLOOP_LLM_PROVIDER=none
+LEARNLOOP_CHECKPOINT_RETENTION_DAYS=30
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000/api/v1
 ```
 
-SQLite 数据库默认创建在 `data/db/learnloop.db`。保持 `LEARNLOOP_LLM_PROVIDER=none`
-时不需要任何模型密钥，系统使用固定课程模板。
+业务 SQLite 数据库默认创建在 `data/db/learnloop.db`，Agent Checkpoint 和可重放事件
+保存在 `data/db/checkpoints.db`。保持 `LEARNLOOP_LLM_PROVIDER=none` 时不需要任何模型
+密钥，系统使用固定课程模板；每日学习 Agent 仍可运行，目标规划 Agent 需要启用模型。
 
 如需让 DeepSeek 生成知识图、计划、讲解和练习，在 `.env` 中配置：
 
@@ -242,14 +248,17 @@ DeepSeek 模型生成；未配置模型时使用确定性模板：
 创建学习目标
 → 生成结构化学习计划
 → 选择计划项并开始学习
-→ 阅读讲解并完成选择题
-→ 查看判分、掌握度和下次复习时间
+→ Agent 生成讲解并在练习处暂停
+→ 提交答案并确认或纠正评分
+→ Agent 更新掌握度和下次复习时间
 → 完成学习会话
 ```
 
 后端 API 的交互式说明和请求结构以 <http://127.0.0.1:8000/docs> 为准。
 阶段三对创建目标、开始会话和提交作答使用 `Idempotency-Key` 请求头，前端 API
 Client 会自动生成该请求头，避免网络重试造成重复数据。
+学习会话页面使用 SSE 展示当前节点和 Tool；连接中断时根据最后事件序号补拉，页面刷新
+则通过稳定的 Run/Thread 映射恢复到同一个 Interrupt。
 
 ## 数据库迁移命令
 
@@ -344,3 +353,5 @@ PowerShell 禁止执行激活脚本，需要根据本机安全策略允许当前
 
 - [文档目录](docs/README.md)
 - [分阶段实现流程](docs/implementation-roadmap.md)
+- [LangGraph 核心工作流](docs/architecture/langgraph-workflows.md)
+- [Checkpoint、Interrupt 与 SSE](docs/architecture/checkpoint-interrupt-sse.md)

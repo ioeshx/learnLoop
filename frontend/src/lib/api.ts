@@ -86,6 +86,47 @@ export type CreateGoalInput = {
   target_date: string | null;
 };
 
+export type AgentRunStatus =
+  | "created"
+  | "running"
+  | "awaiting_input"
+  | "completed"
+  | "failed";
+
+export type AgentEventKind =
+  | "run_started"
+  | "node_started"
+  | "node_completed"
+  | "tool_started"
+  | "tool_completed"
+  | "interrupt_created"
+  | "run_completed"
+  | "run_failed";
+
+export type AgentEvent = {
+  run_id: string;
+  sequence: number;
+  event: AgentEventKind;
+  node: string | null;
+  timestamp: string;
+  data: Record<string, unknown>;
+};
+
+export type AgentRun = {
+  run_id: string;
+  thread_id: string;
+  graph: "daily_learning" | "goal_planning";
+  resource_id: string;
+  status: AgentRunStatus;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AgentStreamResult = {
+  runId: string | null;
+  lastEvent: AgentEvent | null;
+};
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
 
@@ -193,4 +234,109 @@ export function fetchDueReviews(dueBefore?: string): Promise<DueReview[]> {
     ? `?due_before=${encodeURIComponent(dueBefore)}`
     : "";
   return apiRequest<DueReview[]>(`/reviews/due${query}`);
+}
+
+export function fetchAgentRun(runId: string): Promise<AgentRun> {
+  return apiRequest<AgentRun>(`/agent/runs/${runId}`);
+}
+
+export function startDailyAgentRun(
+  sessionId: string,
+  onEvent: (event: AgentEvent) => void,
+  signal?: AbortSignal,
+): Promise<AgentStreamResult> {
+  return streamAgentEvents(
+    `/agent/study-sessions/${sessionId}/runs`,
+    { method: "POST", signal },
+    onEvent,
+  );
+}
+
+export function resumeAgentRun(
+  runId: string,
+  value: unknown,
+  onEvent: (event: AgentEvent) => void,
+  signal?: AbortSignal,
+): Promise<AgentStreamResult> {
+  return streamAgentEvents(
+    `/agent/runs/${runId}/resume`,
+    { method: "POST", body: JSON.stringify({ value }), signal },
+    onEvent,
+  );
+}
+
+export function replayAgentEvents(
+  runId: string,
+  afterSequence: number,
+  onEvent: (event: AgentEvent) => void,
+  signal?: AbortSignal,
+): Promise<AgentStreamResult> {
+  return streamAgentEvents(
+    `/agent/runs/${runId}/events?after=${afterSequence}`,
+    {
+      headers: { "Last-Event-ID": String(afterSequence) },
+      signal,
+    },
+    onEvent,
+  );
+}
+
+async function streamAgentEvents(
+  path: string,
+  init: RequestInit,
+  onEvent: (event: AgentEvent) => void,
+): Promise<AgentStreamResult> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    cache: "no-store",
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+      ...init.headers,
+    },
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
+    throw new Error(
+      body.error?.message ?? `Agent 请求失败，后端返回 ${response.status}`,
+    );
+  }
+  if (!response.body) {
+    throw new Error("浏览器不支持读取 Agent 事件流");
+  }
+
+  const runId = response.headers.get("X-Agent-Run-Id");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let lastEvent: AgentEvent | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done }).replaceAll("\r\n", "\n");
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary !== -1) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const event = parseSseBlock(block);
+      if (event) {
+        lastEvent = event;
+        onEvent(event);
+      }
+      boundary = buffer.indexOf("\n\n");
+    }
+    if (done) break;
+  }
+
+  return { runId: runId ?? lastEvent?.run_id ?? null, lastEvent };
+}
+
+function parseSseBlock(block: string): AgentEvent | null {
+  const data = block
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
+  if (!data) return null;
+  return JSON.parse(data) as AgentEvent;
 }

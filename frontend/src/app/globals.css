@@ -356,6 +356,70 @@ button:disabled {
   gap: 1.4rem;
 }
 
+.agent-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin: -1.4rem 0 1.4rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.62);
+  padding: 0.85rem 1rem;
+}
+
+.agent-progress-dot {
+  width: 0.7rem;
+  height: 0.7rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #d4953e;
+  box-shadow: 0 0 0 0.25rem rgba(212, 149, 62, 0.13);
+}
+
+.agent-progress[data-state="running"] .agent-progress-dot,
+.agent-progress[data-state="connecting"] .agent-progress-dot,
+.agent-progress[data-state="reconnecting"] .agent-progress-dot {
+  animation: agent-pulse 1.4s ease-in-out infinite;
+  background: var(--accent);
+}
+
+.agent-progress[data-state="completed"] .agent-progress-dot {
+  background: #2f9f6d;
+}
+
+.agent-progress[data-state="failed"] .agent-progress-dot {
+  background: var(--danger);
+}
+
+.agent-progress strong {
+  font-size: 0.9rem;
+}
+
+.agent-progress p,
+.grade-summary {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.agent-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.agent-actions .secondary-button {
+  align-self: stretch;
+}
+
+@keyframes agent-pulse {
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
+
 .lesson-card,
 .exercise-card {
   padding: clamp(1.5rem, 5vw, 3.2rem);
@@ -517,6 +581,11 @@ button:disabled {
   }
 
   .result-actions {
+    flex-direction: column;
+  }
+
+  .agent-actions {
+    align-items: stretch;
     flex-direction: column;
   }
 }

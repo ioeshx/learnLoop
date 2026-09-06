@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createGoal,
+  replayAgentEvents,
+  startDailyAgentRun,
   startStudySession,
   submitExerciseAttempt,
 } from "@/lib/api";
@@ -111,5 +113,44 @@ describe("learning workflow API client", () => {
     await expect(
       startStudySession("missing", "item-1", "session-key"),
     ).rejects.toThrow("learning goal was not found");
+  });
+
+  it("parses Agent SSE events and sends a replay cursor", async () => {
+    const payload = {
+      run_id: "run-1",
+      sequence: 7,
+      event: "interrupt_created",
+      node: "wait_for_answer",
+      timestamp: "2026-02-10T08:30:00Z",
+      data: { value: { type: "answer_required" } },
+    };
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () =>
+        new Response(
+          `: keep-alive\n\nid: 7\nevent: interrupt_created\ndata: ${JSON.stringify(payload)}\n\n`,
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "text/event-stream",
+              "X-Agent-Run-Id": "run-1",
+            },
+          },
+        ),
+      );
+    const received: unknown[] = [];
+
+    const result = await startDailyAgentRun("session-1", (event) => {
+      received.push(event);
+    });
+    await replayAgentEvents("run-1", 7, () => undefined);
+
+    expect(result.runId).toBe("run-1");
+    expect(result.lastEvent).toMatchObject(payload);
+    expect(received).toEqual([payload]);
+    expect(fetchMock.mock.calls[1][0]).toContain("?after=7");
+    expect(fetchMock.mock.calls[1][1]?.headers).toMatchObject({
+      "Last-Event-ID": "7",
+    });
   });
 });
