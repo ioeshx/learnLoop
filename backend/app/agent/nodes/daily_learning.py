@@ -3,8 +3,10 @@
 from typing import Literal, cast
 
 from langgraph.runtime import Runtime
+from langgraph.types import interrupt
 
 from app.agent.graphs.context import DailyLearningContext
+from app.agent.nodes.tool_events import call_tool
 from app.agent.prompts import (
     ANSWER_EVALUATION_PROMPT,
     LESSON_PROMPT,
@@ -22,9 +24,17 @@ async def load_context(
     state: StudySessionState, runtime: Runtime[DailyLearningContext]
 ) -> StudySessionState:
     session_id = _required_string(state, "session_id")
-    session = await runtime.context.tools.get_study_session(session_id)
+    session = await call_tool(
+        runtime,
+        "get_study_session",
+        runtime.context.tools.get_study_session(session_id),
+    )
     node_id = cast(str, session["knowledge_node_id"])
-    mastery = await runtime.context.tools.get_mastery_state(node_id)
+    mastery = await call_tool(
+        runtime,
+        "get_mastery_state",
+        runtime.context.tools.get_mastery_state(node_id),
+    )
     return {
         "run_id": state.get("run_id", session_id),
         "session_id": cast(str, session["session_id"]),
@@ -73,7 +83,11 @@ async def retrieve_sources(
     state: StudySessionState, runtime: Runtime[DailyLearningContext]
 ) -> StudySessionState:
     node_id = _required_string(state, "knowledge_node_id")
-    sources = await runtime.context.tools.search_learning_resources(node_id)
+    sources = await call_tool(
+        runtime,
+        "search_learning_resources",
+        runtime.context.tools.search_learning_resources(node_id),
+    )
     return {"source_refs": sources, "events": ["retrieve_sources"]}
 
 
@@ -86,8 +100,12 @@ async def generate_lesson(
     if runtime.context.model is None:
         return {"events": ["generate_lesson"]}
 
-    goal = await runtime.context.tools.get_learning_goal(
-        _required_string(state, "goal_id")
+    goal = await call_tool(
+        runtime,
+        "get_learning_goal",
+        runtime.context.tools.get_learning_goal(
+            _required_string(state, "goal_id")
+        ),
     )
     result = await runtime.context.model.generate(
         LESSON_PROMPT,
@@ -113,13 +131,18 @@ async def generate_lesson(
 async def generate_exercise(
     state: StudySessionState, runtime: Runtime[DailyLearningContext]
 ) -> StudySessionState:
-    exercise = await runtime.context.tools.create_exercise(
-        _required_string(state, "session_id")
+    exercise = await call_tool(
+        runtime,
+        "create_exercise",
+        runtime.context.tools.create_exercise(
+            _required_string(state, "session_id")
+        ),
     )
     return {
         "exercise_id": cast(str, exercise["exercise_id"]),
         "exercise_prompt": cast(str, exercise["prompt"]),
         "exercise_options": cast(list[str], exercise["options"]),
+        "status": "awaiting_answer",
         "events": ["generate_exercise"],
     }
 
@@ -130,7 +153,25 @@ async def wait_for_answer(
     del runtime
     if state.get("selected_options"):
         return {"status": "running", "events": ["wait_for_answer"]}
-    return {"status": "awaiting_answer", "events": ["wait_for_answer"]}
+    response = interrupt(
+        {
+            "type": "answer_required",
+            "run_id": state.get("run_id"),
+            "session_id": state.get("session_id"),
+            "exercise": {
+                "id": state.get("exercise_id"),
+                "prompt": state.get("exercise_prompt"),
+                "options": state.get("exercise_options", []),
+            },
+            "remediation_count": state.get("remediation_count", 0),
+        }
+    )
+    selected_options = _resume_selected_options(response)
+    return {
+        "selected_options": selected_options,
+        "status": "running",
+        "events": ["wait_for_answer"],
+    }
 
 
 async def route_after_answer(
@@ -142,12 +183,69 @@ async def route_after_answer(
 async def evaluate_answer(
     state: StudySessionState, runtime: Runtime[DailyLearningContext]
 ) -> StudySessionState:
-    evaluation = await runtime.context.tools.grade_objective_answer(
-        session_id=_required_string(state, "session_id"),
-        exercise_id=_required_string(state, "exercise_id"),
-        selected_options=state.get("selected_options", []),
+    evaluation = await call_tool(
+        runtime,
+        "grade_objective_answer",
+        runtime.context.tools.grade_objective_answer(
+            session_id=_required_string(state, "session_id"),
+            exercise_id=_required_string(state, "exercise_id"),
+            selected_options=state.get("selected_options", []),
+        ),
     )
-    return {"evaluation": evaluation, "events": ["evaluate_answer"]}
+    return {
+        "evaluation": evaluation,
+        "status": (
+            "awaiting_grade_review"
+            if runtime.context.review_grades
+            else "running"
+        ),
+        "events": ["evaluate_answer"],
+    }
+
+
+async def review_grade(
+    state: StudySessionState, runtime: Runtime[DailyLearningContext]
+) -> StudySessionState:
+    if not runtime.context.review_grades:
+        return {"events": ["review_grade"]}
+    response = interrupt(
+        {
+            "type": "grade_review_required",
+            "run_id": state.get("run_id"),
+            "session_id": state.get("session_id"),
+            "evaluation": state.get("evaluation", {}),
+            "selected_options": state.get("selected_options", []),
+            "allowed_actions": ["accept", "revise_answer"],
+        }
+    )
+    if not isinstance(response, dict):
+        raise ValueError("grade review response must be an object")
+    action = response.get("action")
+    if action == "accept":
+        return {
+            "grade_review": {"action": "accept"},
+            "status": "running",
+            "events": ["review_grade"],
+        }
+    if action == "revise_answer":
+        selected_options = _resume_selected_options(response)
+        evaluation = await call_tool(
+            runtime,
+            "grade_objective_answer",
+            runtime.context.tools.grade_objective_answer(
+                session_id=_required_string(state, "session_id"),
+                exercise_id=_required_string(state, "exercise_id"),
+                selected_options=selected_options,
+            ),
+        )
+        return {
+            "selected_options": selected_options,
+            "evaluation": evaluation,
+            "grade_review": {"action": "revise_answer"},
+            "status": "running",
+            "events": ["review_grade"],
+        }
+    raise ValueError("grade review action must be 'accept' or 'revise_answer'")
 
 
 async def evaluate_short_answer(
@@ -198,12 +296,16 @@ async def update_mastery(
     state: StudySessionState, runtime: Runtime[DailyLearningContext]
 ) -> StudySessionState:
     attempt_number = state.get("attempt_number", 0)
-    update = await runtime.context.tools.update_mastery(
-        session_id=_required_string(state, "session_id"),
-        exercise_id=_required_string(state, "exercise_id"),
-        selected_options=state.get("selected_options", []),
-        idempotency_key=(
-            f"agent:{_required_string(state, 'run_id')}:attempt:{attempt_number}"
+    update = await call_tool(
+        runtime,
+        "update_mastery",
+        runtime.context.tools.update_mastery(
+            session_id=_required_string(state, "session_id"),
+            exercise_id=_required_string(state, "exercise_id"),
+            selected_options=state.get("selected_options", []),
+            idempotency_key=(
+                f"agent:{_required_string(state, 'run_id')}:attempt:{attempt_number}"
+            ),
         ),
     )
     return {
@@ -291,7 +393,7 @@ async def generate_supplemental(
         "lesson_content": content,
         "selected_options": [],
         "remediation_count": state.get("remediation_count", 0) + 1,
-        "status": "remediation",
+        "status": "awaiting_answer",
         "events": ["generate_supplemental"],
     }
 
@@ -312,7 +414,7 @@ async def generate_prerequisite_remediation(
         "lesson_content": content,
         "selected_options": [],
         "remediation_count": state.get("remediation_count", 0) + 1,
-        "status": "remediation",
+        "status": "awaiting_answer",
         "events": ["generate_prerequisite_remediation"],
     }
 
@@ -320,8 +422,12 @@ async def generate_prerequisite_remediation(
 async def save_summary(
     state: StudySessionState, runtime: Runtime[DailyLearningContext]
 ) -> StudySessionState:
-    await runtime.context.tools.complete_study_session(
-        _required_string(state, "session_id")
+    await call_tool(
+        runtime,
+        "complete_study_session",
+        runtime.context.tools.complete_study_session(
+            _required_string(state, "session_id")
+        ),
     )
     outcome = state.get("learning_outcome", "remediation_exhausted")
     summary = (
@@ -355,8 +461,12 @@ async def _generate_remediation(
             f"{_required_string(state, 'knowledge_node_description')}"
             f"{diagnosis_context}"
         )
-    goal = await runtime.context.tools.get_learning_goal(
-        _required_string(state, "goal_id")
+    goal = await call_tool(
+        runtime,
+        "get_learning_goal",
+        runtime.context.tools.get_learning_goal(
+            _required_string(state, "goal_id")
+        ),
     )
     result = await runtime.context.model.generate(
         LESSON_PROMPT,
@@ -395,3 +505,15 @@ def _required_string(state: StudySessionState, key: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"daily-learning state requires '{key}'")
     return value
+
+
+def _resume_selected_options(response: object) -> list[str]:
+    if isinstance(response, dict):
+        selected = response.get("selected_options")
+    else:
+        selected = response
+    if not isinstance(selected, list) or not selected or not all(
+        isinstance(option, str) and option.strip() for option in selected
+    ):
+        raise ValueError("resume value requires non-empty selected_options")
+    return selected

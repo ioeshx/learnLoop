@@ -24,6 +24,9 @@ def test_database_path_is_derived_from_data_directory(tmp_path: Path) -> None:
     assert settings.database_path == tmp_path / "runtime" / "db" / "learnloop.db"
     assert settings.database_url.startswith("sqlite+aiosqlite:///")
     assert settings.database_url.endswith("/runtime/db/learnloop.db")
+    assert settings.checkpoint_path == (
+        tmp_path / "runtime" / "db" / "checkpoints.db"
+    )
 
 
 def test_deepseek_provider_requires_an_api_key() -> None:

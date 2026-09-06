@@ -35,8 +35,14 @@ class StudySessionState(TypedDict, total=False):
     remediation_count: int
     max_remediations: int
     summary: str
+    grade_review: dict[str, object]
     status: Literal[
-        "running", "awaiting_answer", "remediation", "completed", "failed"
+        "running",
+        "awaiting_answer",
+        "awaiting_grade_review",
+        "remediation",
+        "completed",
+        "failed",
     ]
     events: Annotated[list[str], add]
 
@@ -69,7 +75,11 @@ class ResourceIngestionState(TypedDict, total=False):
     job_id: str
     document_id: str
     chunk_ids: list[str]
-    status: Literal["pending", "processing", "completed", "failed"]
+    ambiguities: list[dict[str, object]]
+    ambiguity_resolutions: list[dict[str, object]]
+    status: Literal[
+        "pending", "processing", "awaiting_confirmation", "completed", "failed"
+    ]
     error: str
     events: Annotated[list[str], add]
 

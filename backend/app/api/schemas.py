@@ -3,7 +3,9 @@
 from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.types import JsonValue
 
+from app.agent.execution import AgentEvent, AgentRun
 from app.application.models import AttemptResult, DueReview, PlanDetails, SessionDetails
 from app.domain.goals import LearningGoal
 
@@ -202,3 +204,42 @@ class DueReviewResponse(BaseModel):
                 else None
             ),
         )
+
+
+class AgentRunResponse(BaseModel):
+    run_id: str
+    thread_id: str
+    graph: str
+    resource_id: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_execution(cls, run: AgentRun) -> "AgentRunResponse":
+        return cls(
+            run_id=run.run_id,
+            thread_id=run.thread_id,
+            graph=run.graph_kind,
+            resource_id=run.resource_id,
+            status=run.status,
+            created_at=run.created_at,
+            updated_at=run.updated_at,
+        )
+
+
+class AgentEventResponse(BaseModel):
+    run_id: str
+    sequence: int
+    event: str
+    node: str | None
+    timestamp: datetime
+    data: dict[str, object]
+
+    @classmethod
+    def from_execution(cls, event: AgentEvent) -> "AgentEventResponse":
+        return cls.model_validate(event.as_dict())
+
+
+class ResumeAgentRunRequest(RequestModel):
+    value: JsonValue

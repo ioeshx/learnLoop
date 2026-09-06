@@ -1,5 +1,8 @@
 """Compiled goal-planning StateGraph with explicit human approval."""
 
+from typing import Any
+
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
@@ -19,7 +22,9 @@ from app.agent.nodes.goal_planning import (
 from app.agent.states import GoalPlanningState
 
 
-def build_goal_planning_graph() -> CompiledStateGraph[
+def build_goal_planning_graph(
+    checkpointer: BaseCheckpointSaver[Any] | None = None,
+) -> CompiledStateGraph[
     GoalPlanningState,
     GoalPlanningContext,
     GoalPlanningState,
@@ -52,4 +57,4 @@ def build_goal_planning_graph() -> CompiledStateGraph[
         {"persist": "persist_plan", "wait": END},
     )
     builder.add_edge("persist_plan", END)
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)

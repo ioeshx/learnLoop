@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.agent.execution import open_agent_runtime
 from app.api.router import api_router
 from app.application import ApplicationDependencies
 from app.config import Settings, get_settings
@@ -30,6 +31,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(lifespan_app: FastAPI) -> AsyncGenerator[None, None]:
         database = create_database(resolved_settings)
         model_provider: ModelProvider | None = None
+        structured_model: StructuredModel | None = None
         curriculum_generator = None
         if resolved_settings.llm_provider == "deepseek":
             api_key = resolved_settings.llm_api_key
@@ -42,18 +44,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 timeout_seconds=resolved_settings.llm_timeout_seconds,
                 max_retries=resolved_settings.llm_max_retries,
             )
-            curriculum_generator = LlmCurriculumGenerator(
-                StructuredModel(model_provider)
-            )
-        lifespan_app.state.database = database
-        lifespan_app.state.model_provider = model_provider
-        lifespan_app.state.application_dependencies = ApplicationDependencies(
-            uow_factory=lambda: SqlAlchemyUnitOfWork(database.session_factory),
-            review_scheduler=FsrsReviewScheduler(),
-            curriculum_generator=curriculum_generator,
-        )
+            structured_model = StructuredModel(model_provider)
+            curriculum_generator = LlmCurriculumGenerator(structured_model)
         try:
-            yield
+            lifespan_app.state.database = database
+            lifespan_app.state.model_provider = model_provider
+            application_dependencies = ApplicationDependencies(
+                uow_factory=lambda: SqlAlchemyUnitOfWork(database.session_factory),
+                review_scheduler=FsrsReviewScheduler(),
+                curriculum_generator=curriculum_generator,
+            )
+            lifespan_app.state.application_dependencies = application_dependencies
+            async with open_agent_runtime(
+                resolved_settings, application_dependencies, structured_model
+            ) as agent_runtime:
+                lifespan_app.state.agent_runtime = agent_runtime
+                yield
         finally:
             if model_provider is not None:
                 await model_provider.aclose()

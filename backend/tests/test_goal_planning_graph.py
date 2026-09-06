@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 from typing import cast
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 
 from app.agent.graphs import GoalPlanningContext, build_goal_planning_graph
 from app.agent.states import GoalPlanningState
@@ -127,7 +129,6 @@ async def test_goal_planning_graph_waits_for_approval_then_persists() -> None:
         "build_knowledge_graph",
         "validate_graph",
         "generate_plan",
-        "wait_for_approval",
     ]
     assert factory.state.plans == {}
     assert len(provider.requests) == 3
@@ -212,3 +213,30 @@ async def test_goal_planning_graph_rejects_cycle_before_persistence() -> None:
 
     assert factory.state.nodes == {}
     assert factory.state.plans == {}
+
+
+@pytest.mark.asyncio
+async def test_approval_interrupt_accepts_valid_plan_edit() -> None:
+    factory, context, _, goal_id = await _context(_planning_responses())
+    graph = build_goal_planning_graph(InMemorySaver())
+    config = {"configurable": {"thread_id": "plan-edit-thread"}}
+
+    interrupted = await graph.ainvoke(
+        {"run_id": "plan-edit-run", "goal_id": goal_id},
+        config=config,
+        context=context,
+    )
+    edited_plan = dict(interrupted["study_plan"])
+    edited_items = [dict(item) for item in edited_plan["items"]]
+    edited_items[0]["title"] = "先比较邻接表与邻接矩阵"
+    edited_plan["items"] = edited_items
+
+    completed = await graph.ainvoke(
+        Command(resume={"action": "edit", "study_plan": edited_plan}),
+        config=config,
+        context=context,
+    )
+
+    assert completed["status"] == "completed"
+    persisted = factory.state.plans[completed["plan_id"]]
+    assert persisted.items[0].title == "先比较邻接表与邻接矩阵"

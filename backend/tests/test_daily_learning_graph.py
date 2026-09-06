@@ -4,7 +4,9 @@ from datetime import UTC, datetime
 from typing import cast
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.runtime import Runtime
+from langgraph.types import Command
 
 from app.agent.graphs import DailyLearningContext, build_daily_learning_graph
 from app.agent.nodes.daily_learning import evaluate_short_answer
@@ -85,11 +87,10 @@ async def test_daily_graph_waits_then_completes_correct_answer() -> None:
     assert awaiting["events"] == [
         "load_context",
         "select_concepts",
-        "retrieve_sources",
-        "generate_lesson",
-        "generate_exercise",
-        "wait_for_answer",
-    ]
+            "retrieve_sources",
+            "generate_lesson",
+            "generate_exercise",
+        ]
     assert factory.state.attempts == {}
 
     completed = cast(
@@ -240,3 +241,44 @@ async def test_wrong_answer_runs_model_diagnosis_and_remediation() -> None:
         "misconception_diagnosis",
         "lesson",
     ]
+
+
+@pytest.mark.asyncio
+async def test_learner_can_revise_answer_at_grade_interrupt() -> None:
+    factory, base_context, session_id, correct_answer, wrong_answer = (
+        await _learning_run()
+    )
+    context = DailyLearningContext(
+        tools=base_context.tools,
+        review_grades=True,
+    )
+    graph = build_daily_learning_graph(InMemorySaver())
+    config = {"configurable": {"thread_id": "grade-review-thread"}}
+
+    interrupted = await graph.ainvoke(
+        {
+            "run_id": "grade-review-run",
+            "session_id": session_id,
+            "selected_options": [wrong_answer],
+        },
+        config=config,
+        context=context,
+    )
+    assert interrupted["status"] == "awaiting_grade_review"
+    assert interrupted["evaluation"]["is_correct"] is False
+
+    completed = await graph.ainvoke(
+        Command(
+            resume={
+                "action": "revise_answer",
+                "selected_options": [correct_answer],
+            }
+        ),
+        config=config,
+        context=context,
+    )
+
+    assert completed["status"] == "completed"
+    assert completed["learning_outcome"] == "mastered"
+    attempt = next(iter(factory.state.attempts.values()))
+    assert attempt.answer == (correct_answer,)

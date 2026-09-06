@@ -1,5 +1,8 @@
 """Compiled bounded daily-learning StateGraph."""
 
+from typing import Any
+
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
@@ -13,6 +16,7 @@ from app.agent.nodes.daily_learning import (
     generate_supplemental,
     load_context,
     retrieve_sources,
+    review_grade,
     route_after_answer,
     route_after_diagnosis,
     route_after_review,
@@ -26,7 +30,9 @@ from app.agent.nodes.daily_learning import (
 from app.agent.states import StudySessionState
 
 
-def build_daily_learning_graph() -> CompiledStateGraph[
+def build_daily_learning_graph(
+    checkpointer: BaseCheckpointSaver[Any] | None = None,
+) -> CompiledStateGraph[
     StudySessionState,
     DailyLearningContext,
     StudySessionState,
@@ -40,6 +46,7 @@ def build_daily_learning_graph() -> CompiledStateGraph[
     builder.add_node("generate_exercise", generate_exercise)
     builder.add_node("wait_for_answer", wait_for_answer)
     builder.add_node("evaluate_answer", evaluate_answer)
+    builder.add_node("review_grade", review_grade)
     builder.add_node("route_by_result", route_by_result)
     builder.add_node("update_mastery", update_mastery)
     builder.add_node("schedule_review", schedule_review)
@@ -62,7 +69,8 @@ def build_daily_learning_graph() -> CompiledStateGraph[
         route_after_answer,
         {"answer": "evaluate_answer", "wait": END},
     )
-    builder.add_edge("evaluate_answer", "route_by_result")
+    builder.add_edge("evaluate_answer", "review_grade")
+    builder.add_edge("review_grade", "route_by_result")
     builder.add_edge("route_by_result", "update_mastery")
     builder.add_edge("update_mastery", "schedule_review")
     builder.add_conditional_edges(
@@ -84,4 +92,4 @@ def build_daily_learning_graph() -> CompiledStateGraph[
     builder.add_edge("generate_supplemental", "wait_for_answer")
     builder.add_edge("generate_prerequisite_remediation", "wait_for_answer")
     builder.add_edge("save_summary", END)
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)

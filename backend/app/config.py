@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.deepseek.com"
     llm_timeout_seconds: float = Field(default=60.0, gt=0, le=600)
     llm_max_retries: int = Field(default=2, ge=0, le=5)
+    checkpoint_retention_days: int = Field(default=30, ge=1, le=3650)
 
     @field_validator("api_prefix")
     @classmethod
@@ -100,6 +101,10 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         return f"sqlite+aiosqlite:///{self.database_path.as_posix()}"
+
+    @property
+    def checkpoint_path(self) -> Path:
+        return self.database_dir / "checkpoints.db"
 
     def ensure_runtime_directories(self) -> None:
         """Create only the runtime directories required at application boot."""

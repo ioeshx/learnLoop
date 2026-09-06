@@ -13,6 +13,7 @@ class DailyLearningContext:
     tools: LearningTools
     model: StructuredModel | None = None
     max_remediations: int = 2
+    review_grades: bool = False
 
     def __post_init__(self) -> None:
         if self.max_remediations < 0:
