@@ -5,6 +5,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from app.agent.graphs.context import DailyLearningContext
 from app.agent.nodes.daily_learning import (
+    diagnose_error,
     evaluate_answer,
     generate_exercise,
     generate_lesson,
@@ -13,6 +14,7 @@ from app.agent.nodes.daily_learning import (
     load_context,
     retrieve_sources,
     route_after_answer,
+    route_after_diagnosis,
     route_after_review,
     route_by_result,
     save_summary,
@@ -41,6 +43,7 @@ def build_daily_learning_graph() -> CompiledStateGraph[
     builder.add_node("route_by_result", route_by_result)
     builder.add_node("update_mastery", update_mastery)
     builder.add_node("schedule_review", schedule_review)
+    builder.add_node("diagnose_error", diagnose_error)
     builder.add_node("generate_supplemental", generate_supplemental)
     builder.add_node(
         "generate_prerequisite_remediation",
@@ -67,6 +70,13 @@ def build_daily_learning_graph() -> CompiledStateGraph[
         route_after_review,
         {
             "complete": "save_summary",
+            "remediate": "diagnose_error",
+        },
+    )
+    builder.add_conditional_edges(
+        "diagnose_error",
+        route_after_diagnosis,
+        {
             "supplemental": "generate_supplemental",
             "prerequisite": "generate_prerequisite_remediation",
         },

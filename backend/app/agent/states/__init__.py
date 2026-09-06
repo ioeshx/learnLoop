@@ -18,10 +18,14 @@ class StudySessionState(TypedDict, total=False):
     exercise_prompt: str
     exercise_options: list[str]
     selected_options: list[str]
+    learner_answer: str
+    evaluation_rubric: str
+    reference_answer: str
     source_refs: list[dict[str, str]]
     lesson_title: str
     lesson_content: str
     evaluation: dict[str, object]
+    diagnosis: dict[str, object]
     mastery_score: float
     review_due_at: str
     learning_outcome: Literal[
@@ -42,6 +46,7 @@ class GoalPlanningState(TypedDict, total=False):
     goal_id: str
     goal: dict[str, object]
     clarification: dict[str, object]
+    clarification_answers: dict[str, str]
     knowledge_graph: dict[str, object]
     study_plan: dict[str, object]
     missing_information: list[str]

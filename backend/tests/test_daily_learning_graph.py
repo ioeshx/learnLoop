@@ -4,8 +4,10 @@ from datetime import UTC, datetime
 from typing import cast
 
 import pytest
+from langgraph.runtime import Runtime
 
 from app.agent.graphs import DailyLearningContext, build_daily_learning_graph
+from app.agent.nodes.daily_learning import evaluate_short_answer
 from app.agent.states import StudySessionState
 from app.agent.tools import LearningTools
 from app.application import (
@@ -17,6 +19,7 @@ from app.application import (
     StartStudySession,
 )
 from app.domain.sessions import StudySessionStatus
+from app.infrastructure.llm import FakeModelProvider, StructuredModel
 from app.infrastructure.review import FsrsReviewScheduler
 from tests.fakes import FakeUnitOfWorkFactory
 
@@ -150,3 +153,90 @@ async def test_daily_graph_bounds_remediation_to_two_retries() -> None:
     assert completed["remediation_count"] == 2
     assert completed["attempt_number"] == 3
     assert len(factory.state.attempts) == 3
+
+
+@pytest.mark.asyncio
+async def test_short_answer_evaluation_node_uses_structured_model() -> None:
+    _, base_context, _, _, _ = await _learning_run()
+    provider = FakeModelProvider(
+        {
+            "answer_evaluation": [
+                {
+                    "score_ratio": 0.8,
+                    "is_correct": True,
+                    "feedback": "说明了先进先出与逐层展开的联系。",
+                    "strengths": ["抓住了队列顺序"],
+                    "improvements": ["补充访问标记的作用"],
+                }
+            ]
+        }
+    )
+    context = DailyLearningContext(
+        tools=base_context.tools,
+        model=StructuredModel(provider),
+    )
+
+    result = await evaluate_short_answer(
+        {
+            "exercise_prompt": "BFS 为什么使用队列？",
+            "evaluation_rubric": "说明先进先出与逐层遍历的关系",
+            "reference_answer": "队列让先发现的节点先展开。",
+            "learner_answer": "因为队列先进先出，所以可以逐层展开。",
+        },
+        Runtime(context=context),
+    )
+
+    assert result["evaluation"]["score_ratio"] == pytest.approx(0.8)
+    assert result["events"] == ["evaluate_short_answer"]
+    assert provider.requests[0].prompt_name == "answer_evaluation"
+
+
+@pytest.mark.asyncio
+async def test_wrong_answer_runs_model_diagnosis_and_remediation() -> None:
+    _, base_context, session_id, _, wrong_answer = await _learning_run()
+    lesson = {
+        "title": "图遍历基础",
+        "explanation": "先明确图遍历中的节点与边。",
+        "examples": ["从起点访问相邻节点。"],
+        "checkpoints": ["起点的作用是什么？"],
+        "summary": "遍历从起点逐步访问节点。",
+    }
+    provider = FakeModelProvider(
+        {
+            "lesson": [lesson, {**lesson, "title": "补充讲解"}],
+            "misconception_diagnosis": [
+                {
+                    "misconception": "混淆了概念边界与细节记忆。",
+                    "evidence": ["选择了错误选项"],
+                    "remediation_steps": ["重新比较三个选项"],
+                    "prerequisite_node_keys": [],
+                }
+            ],
+        }
+    )
+    context = DailyLearningContext(
+        tools=base_context.tools,
+        model=StructuredModel(provider),
+    )
+
+    result = cast(
+        StudySessionState,
+        await build_daily_learning_graph().ainvoke(
+            {
+                "run_id": "model-remediation-run",
+                "session_id": session_id,
+                "selected_options": [wrong_answer],
+            },
+            context=context,
+        ),
+    )
+
+    assert result["status"] == "awaiting_answer"
+    assert result["diagnosis"]["misconception"] == (
+        "混淆了概念边界与细节记忆。"
+    )
+    assert [request.prompt_name for request in provider.requests] == [
+        "lesson",
+        "misconception_diagnosis",
+        "lesson",
+    ]

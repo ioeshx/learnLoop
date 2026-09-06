@@ -11,6 +11,7 @@ from app.application.models import (
     CreateGoalCommand,
     DueReview,
     GradeAnswerCommand,
+    PersistPlanProposalCommand,
     PlanDetails,
     ResourceSnippet,
     SessionDetails,
@@ -27,7 +28,12 @@ from app.domain.exercises import (
     grade_multiple_choice,
 )
 from app.domain.goals import GoalStatus, LearningGoal
-from app.domain.knowledge import KnowledgeNode
+from app.domain.knowledge import (
+    KnowledgeEdge,
+    KnowledgeNode,
+    RelationType,
+    validate_knowledge_graph,
+)
 from app.domain.mastery import (
     MasteryEvent,
     MasteryEventType,
@@ -205,6 +211,112 @@ class CreateStudyPlan:
                 )
             await uow.commit()
             return await _get_plan_details(uow, curriculum.plan)
+
+
+class PersistStudyPlanProposal:
+    """Validate and atomically persist an approved Agent plan proposal."""
+
+    def __init__(self, dependencies: ApplicationDependencies) -> None:
+        self._dependencies = dependencies
+
+    async def execute(self, command: PersistPlanProposalCommand) -> PlanDetails:
+        now = self._dependencies.clock()
+        async with self._dependencies.uow_factory() as uow:
+            goal = await uow.goals.get(command.goal_id)
+            if goal is None:
+                raise NotFoundError("learning goal", command.goal_id)
+            existing = await uow.plans.list_for_goal(command.goal_id)
+            if existing:
+                return await _get_plan_details(uow, existing[-1])
+
+        node_keys = [node.key for node in command.nodes]
+        if not node_keys or len(node_keys) != len(set(node_keys)):
+            raise ValueError(
+                "proposed knowledge node keys must be non-empty and unique"
+            )
+        node_by_key = {
+            proposal.key: KnowledgeNode.create(
+                goal_id=command.goal_id,
+                title=proposal.title,
+                description=proposal.description,
+                difficulty=proposal.difficulty,
+                now=now,
+            )
+            for proposal in command.nodes
+        }
+        try:
+            edges = tuple(
+                KnowledgeEdge.create(
+                    goal_id=command.goal_id,
+                    source_node_id=node_by_key[proposal_edge.source_key].id,
+                    target_node_id=node_by_key[proposal_edge.target_key].id,
+                    relation=RelationType(proposal_edge.relation),
+                    now=now,
+                )
+                for proposal_edge in command.edges
+            )
+        except KeyError as error:
+            raise ValueError("proposed edge references an unknown node") from error
+        nodes = tuple(node_by_key.values())
+        validate_knowledge_graph(nodes, edges)
+        item_keys = [item.knowledge_node_key for item in command.items]
+        if set(item_keys) != set(node_keys) or len(item_keys) != len(node_keys):
+            raise ValueError("study plan must contain every proposed node once")
+        position = {key: index for index, key in enumerate(item_keys)}
+        for proposal_edge in command.edges:
+            if (
+                proposal_edge.relation == RelationType.PREREQUISITE.value
+                and position[proposal_edge.source_key]
+                >= position[proposal_edge.target_key]
+            ):
+                raise ValueError("study plan violates prerequisite ordering")
+        plan = StudyPlan.create(
+            goal_id=command.goal_id,
+            item_specs=[
+                (
+                    node_by_key[item.knowledge_node_key].id,
+                    item.title,
+                    item.estimated_minutes,
+                )
+                for item in command.items
+            ],
+            now=now,
+        )
+        exercises = tuple(
+            Exercise.create_multiple_choice(
+                knowledge_node_id=node.id,
+                prompt=f"以下哪项最符合“{node.title}”的学习重点？",
+                options=[
+                    node.description,
+                    "跳过概念验证，直接记忆结论",
+                    "只记录学习时长，不检查理解",
+                ],
+                answer_key=[node.description],
+                now=now,
+            )
+            for node in nodes
+        )
+
+        async with self._dependencies.uow_factory() as uow:
+            persisted_goal = await uow.goals.get(command.goal_id)
+            if persisted_goal is None:
+                raise NotFoundError("learning goal", command.goal_id)
+            existing = await uow.plans.list_for_goal(command.goal_id)
+            if existing:
+                return await _get_plan_details(uow, existing[-1])
+            for node in nodes:
+                await uow.knowledge.add_node(node)
+            for domain_edge in edges:
+                await uow.knowledge.add_edge(domain_edge)
+            await uow.plans.add(plan)
+            for exercise in exercises:
+                await uow.exercises.add(exercise)
+            if persisted_goal.status == GoalStatus.DRAFT:
+                await uow.goals.update(
+                    persisted_goal.change_status(GoalStatus.ACTIVE, now=now)
+                )
+            await uow.commit()
+            return await _get_plan_details(uow, plan)
 
 
 class GetStudyPlan:

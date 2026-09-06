@@ -60,6 +60,9 @@ class SqlAlchemyLearningGoalRepository:
         self._session = session
 
     async def add(self, goal: LearningGoal) -> None:
+        # Domain objects are mapped without ORM relationships. Flush previously
+        # staged parents so SQLite sees foreign-key dependencies in order.
+        await self._session.flush()
         self._session.add(_goal_to_model(goal))
 
     async def get(self, goal_id: str) -> LearningGoal | None:
@@ -92,6 +95,7 @@ class SqlAlchemyKnowledgeRepository:
         self._session = session
 
     async def add_node(self, node: KnowledgeNode) -> None:
+        await self._session.flush()
         self._session.add(
             KnowledgeNodeModel(
                 id=node.id,
@@ -145,6 +149,7 @@ class SqlAlchemyStudyPlanRepository:
         self._session = session
 
     async def add(self, plan: StudyPlan) -> None:
+        await self._session.flush()
         self._session.add(
             StudyPlanModel(
                 id=plan.id,
@@ -154,6 +159,7 @@ class SqlAlchemyStudyPlanRepository:
                 created_at=plan.created_at,
             )
         )
+        await self._session.flush()
         self._session.add_all(
             [
                 PlanItemModel(
@@ -229,6 +235,7 @@ class SqlAlchemyExerciseRepository:
         self._session = session
 
     async def add(self, exercise: Exercise) -> None:
+        await self._session.flush()
         self._session.add(
             ExerciseModel(
                 id=exercise.id,
@@ -255,6 +262,7 @@ class SqlAlchemyExerciseRepository:
         return [_exercise_from_model(model) for model in result]
 
     async def add_attempt(self, attempt: ExerciseAttempt) -> None:
+        await self._session.flush()
         self._session.add(
             ExerciseAttemptModel(
                 id=attempt.id,
@@ -295,6 +303,7 @@ class SqlAlchemyStudySessionRepository:
         self._session = session
 
     async def add(self, study_session: StudySession) -> None:
+        await self._session.flush()
         self._session.add(_study_session_to_model(study_session))
 
     async def get(self, session_id: str) -> StudySession | None:
@@ -314,6 +323,7 @@ class SqlAlchemyMasteryRepository:
         self._session = session
 
     async def add_event(self, event: MasteryEvent) -> None:
+        await self._session.flush()
         self._session.add(
             MasteryEventModel(
                 id=event.id,

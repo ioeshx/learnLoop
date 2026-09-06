@@ -5,8 +5,16 @@ from typing import Literal, cast
 from langgraph.runtime import Runtime
 
 from app.agent.graphs.context import DailyLearningContext
-from app.agent.prompts import LESSON_PROMPT
-from app.agent.schemas import LessonContent
+from app.agent.prompts import (
+    ANSWER_EVALUATION_PROMPT,
+    LESSON_PROMPT,
+    MISCONCEPTION_DIAGNOSIS_PROMPT,
+)
+from app.agent.schemas import (
+    AnswerEvaluation,
+    LessonContent,
+    MisconceptionDiagnosis,
+)
 from app.agent.states import StudySessionState
 
 
@@ -142,6 +150,28 @@ async def evaluate_answer(
     return {"evaluation": evaluation, "events": ["evaluate_answer"]}
 
 
+async def evaluate_short_answer(
+    state: StudySessionState, runtime: Runtime[DailyLearningContext]
+) -> StudySessionState:
+    """Reusable LLM node for future short-answer exercise types."""
+    if runtime.context.model is None:
+        raise ValueError("short-answer evaluation requires a model")
+    result = await runtime.context.model.generate(
+        ANSWER_EVALUATION_PROMPT,
+        {
+            "question": _required_string(state, "exercise_prompt"),
+            "rubric": _required_string(state, "evaluation_rubric"),
+            "reference_answer": _required_string(state, "reference_answer"),
+            "learner_answer": _required_string(state, "learner_answer"),
+        },
+        AnswerEvaluation,
+    )
+    return {
+        "evaluation": result.value.model_dump(mode="json"),
+        "events": ["evaluate_short_answer"],
+    }
+
+
 async def route_by_result(
     state: StudySessionState, runtime: Runtime[DailyLearningContext]
 ) -> StudySessionState:
@@ -191,15 +221,60 @@ async def schedule_review(
     return {"review_due_at": due_at, "events": ["schedule_review"]}
 
 
+async def diagnose_error(
+    state: StudySessionState, runtime: Runtime[DailyLearningContext]
+) -> StudySessionState:
+    expected = state.get("evaluation", {}).get("expected_answer", [])
+    if not isinstance(expected, list) or not all(
+        isinstance(option, str) for option in expected
+    ):
+        raise ValueError("objective evaluation requires expected answers")
+    if runtime.context.model is None:
+        diagnosis: dict[str, object] = {
+            "misconception": "本次答案与标准答案不一致。",
+            "evidence": [
+                f"选择：{', '.join(state.get('selected_options', []))}",
+                f"标准答案：{', '.join(expected)}",
+            ],
+            "remediation_steps": ["重新比较每个选项与知识点定义。"],
+            "prerequisite_node_keys": [],
+        }
+    else:
+        result = await runtime.context.model.generate(
+            MISCONCEPTION_DIAGNOSIS_PROMPT,
+            {
+                "knowledge_node": _required_string(
+                    state, "knowledge_node_title"
+                ),
+                "question": _required_string(state, "exercise_prompt"),
+                "expected_answer": expected,
+                "learner_answer": state.get("selected_options", []),
+            },
+            MisconceptionDiagnosis,
+        )
+        diagnosis = result.value.model_dump(mode="json")
+    return {"diagnosis": diagnosis, "events": ["diagnose_error"]}
+
+
 async def route_after_review(
     state: StudySessionState,
-) -> Literal["complete", "supplemental", "prerequisite"]:
+) -> Literal["complete", "remediate"]:
     outcome = state.get("learning_outcome")
-    if outcome == "partially_mastered":
-        return "supplemental"
-    if outcome == "not_mastered":
-        return "prerequisite"
-    return "complete"
+    return (
+        "remediate"
+        if outcome in {"partially_mastered", "not_mastered"}
+        else "complete"
+    )
+
+
+async def route_after_diagnosis(
+    state: StudySessionState,
+) -> Literal["supplemental", "prerequisite"]:
+    return (
+        "supplemental"
+        if state.get("learning_outcome") == "partially_mastered"
+        else "prerequisite"
+    )
 
 
 async def generate_supplemental(
@@ -267,10 +342,18 @@ async def _generate_remediation(
     title_prefix: str,
     description_prefix: str,
 ) -> str:
+    diagnosis = state.get("diagnosis", {})
+    misconception = diagnosis.get("misconception", "")
+    diagnosis_context = (
+        f"\n本次错因诊断：{misconception}"
+        if isinstance(misconception, str) and misconception
+        else ""
+    )
     if runtime.context.model is None:
         return (
             f"{description_prefix}\n\n"
             f"{_required_string(state, 'knowledge_node_description')}"
+            f"{diagnosis_context}"
         )
     goal = await runtime.context.tools.get_learning_goal(
         _required_string(state, "goal_id")
@@ -285,6 +368,7 @@ async def _generate_remediation(
             "knowledge_node_description": (
                 f"{description_prefix}"
                 f"{_required_string(state, 'knowledge_node_description')}"
+                f"{diagnosis_context}"
             ),
             "difficulty": state.get("knowledge_node_difficulty", 1.0),
         },

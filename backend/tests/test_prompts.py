@@ -6,7 +6,7 @@ from app.agent.prompts import PROMPT_CATALOG
 def test_prompt_catalog_has_unique_versioned_contracts() -> None:
     identities = {(prompt.name, prompt.version) for prompt in PROMPT_CATALOG}
 
-    assert len(PROMPT_CATALOG) == 6
+    assert len(PROMPT_CATALOG) == 7
     assert len(identities) == len(PROMPT_CATALOG)
     assert all(prompt.use_case for prompt in PROMPT_CATALOG)
     assert all(prompt.input_schema for prompt in PROMPT_CATALOG)

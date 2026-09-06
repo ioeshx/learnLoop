@@ -5,6 +5,9 @@ from app.agent.prompts.exercise import EXERCISE_PROMPT
 from app.agent.prompts.goal_clarification import GOAL_CLARIFICATION_PROMPT
 from app.agent.prompts.knowledge_graph import KNOWLEDGE_GRAPH_PROMPT
 from app.agent.prompts.lesson import LESSON_PROMPT
+from app.agent.prompts.misconception_diagnosis import (
+    MISCONCEPTION_DIAGNOSIS_PROMPT,
+)
 from app.agent.prompts.models import PromptInput, PromptTemplate, RenderedPrompt
 from app.agent.prompts.study_plan import STUDY_PLAN_PROMPT
 
@@ -15,6 +18,7 @@ PROMPT_CATALOG = (
     LESSON_PROMPT,
     EXERCISE_PROMPT,
     ANSWER_EVALUATION_PROMPT,
+    MISCONCEPTION_DIAGNOSIS_PROMPT,
 )
 
 __all__ = [
@@ -23,6 +27,7 @@ __all__ = [
     "GOAL_CLARIFICATION_PROMPT",
     "KNOWLEDGE_GRAPH_PROMPT",
     "LESSON_PROMPT",
+    "MISCONCEPTION_DIAGNOSIS_PROMPT",
     "PROMPT_CATALOG",
     "STUDY_PLAN_PROMPT",
     "PromptInput",

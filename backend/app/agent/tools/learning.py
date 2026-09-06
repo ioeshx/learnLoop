@@ -3,17 +3,21 @@
 from dataclasses import dataclass
 from datetime import datetime
 
-from app.agent.schemas import KnowledgeGraphProposal
+from app.agent.schemas import KnowledgeGraphProposal, StudyPlanProposal
 from app.application import (
     ApplicationDependencies,
     CompleteStudySession,
-    CreateStudyPlan,
     GetDueReviews,
     GetLearningGoal,
     GetMasteryState,
     GetStudySession,
     GradeAnswerCommand,
     GradeObjectiveAnswer,
+    PersistPlanProposalCommand,
+    PersistStudyPlanProposal,
+    ProposedKnowledgeEdge,
+    ProposedKnowledgeNode,
+    ProposedPlanItem,
     SearchLearningResources,
     SubmitAttemptCommand,
     SubmitExerciseAttempt,
@@ -138,8 +142,67 @@ class LearningTools:
         validate_knowledge_graph(nodes, edges)
         return proposal
 
-    async def save_plan_proposal(self, goal_id: str) -> dict[str, object]:
-        details = await CreateStudyPlan(self.dependencies).execute(goal_id)
+    def validate_study_plan(
+        self,
+        proposal_data: dict[str, object],
+        graph_data: dict[str, object],
+    ) -> StudyPlanProposal:
+        graph = KnowledgeGraphProposal.model_validate(graph_data)
+        proposal = StudyPlanProposal.model_validate(proposal_data)
+        node_keys = {node.key for node in graph.nodes}
+        plan_keys = {item.knowledge_node_key for item in proposal.items}
+        if plan_keys != node_keys or len(proposal.items) != len(graph.nodes):
+            raise ValueError("study plan must contain every proposed node once")
+        position = {
+            item.knowledge_node_key: index
+            for index, item in enumerate(proposal.items)
+        }
+        for edge in graph.edges:
+            if (
+                edge.relation == RelationType.PREREQUISITE.value
+                and position[edge.source_key] >= position[edge.target_key]
+            ):
+                raise ValueError("study plan violates prerequisite ordering")
+        return proposal
+
+    async def save_plan_proposal(
+        self,
+        goal_id: str,
+        graph_data: dict[str, object],
+        plan_data: dict[str, object],
+    ) -> dict[str, object]:
+        graph = self.validate_knowledge_graph(goal_id, graph_data)
+        plan = self.validate_study_plan(plan_data, graph_data)
+        details = await PersistStudyPlanProposal(self.dependencies).execute(
+            PersistPlanProposalCommand(
+                goal_id=goal_id,
+                nodes=tuple(
+                    ProposedKnowledgeNode(
+                        key=node.key,
+                        title=node.title,
+                        description=node.description,
+                        difficulty=node.difficulty,
+                    )
+                    for node in graph.nodes
+                ),
+                edges=tuple(
+                    ProposedKnowledgeEdge(
+                        source_key=edge.source_key,
+                        target_key=edge.target_key,
+                        relation=edge.relation,
+                    )
+                    for edge in graph.edges
+                ),
+                items=tuple(
+                    ProposedPlanItem(
+                        knowledge_node_key=item.knowledge_node_key,
+                        title=item.title,
+                        estimated_minutes=item.estimated_minutes,
+                    )
+                    for item in plan.items
+                ),
+            )
+        )
         return {
             "plan_id": details.plan.id,
             "item_ids": [item.id for item in details.plan.items],

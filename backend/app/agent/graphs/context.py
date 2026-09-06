@@ -17,3 +17,11 @@ class DailyLearningContext:
     def __post_init__(self) -> None:
         if self.max_remediations < 0:
             raise ValueError("max_remediations cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class GoalPlanningContext:
+    """Dependencies excluded from serializable goal-planning state."""
+
+    tools: LearningTools
+    model: StructuredModel

@@ -51,6 +51,36 @@ class ResourceSnippet:
 
 
 @dataclass(frozen=True, slots=True)
+class ProposedKnowledgeNode:
+    key: str
+    title: str
+    description: str
+    difficulty: float
+
+
+@dataclass(frozen=True, slots=True)
+class ProposedKnowledgeEdge:
+    source_key: str
+    target_key: str
+    relation: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProposedPlanItem:
+    knowledge_node_key: str
+    title: str
+    estimated_minutes: int
+
+
+@dataclass(frozen=True, slots=True)
+class PersistPlanProposalCommand:
+    goal_id: str
+    nodes: tuple[ProposedKnowledgeNode, ...]
+    edges: tuple[ProposedKnowledgeEdge, ...]
+    items: tuple[ProposedPlanItem, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class PlanDetails:
     plan: StudyPlan
     nodes: tuple[KnowledgeNode, ...]
