@@ -14,7 +14,6 @@ import app.infrastructure.database.models  # noqa: F401
 from app.infrastructure.database.base import Base
 from app.infrastructure.database.engine import configure_sqlite_connection
 
-
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

@@ -6,7 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_TABLES = {
     "users",
@@ -47,7 +46,7 @@ def test_upgrade_creates_the_initial_schema(tmp_path: Path) -> None:
         journal_mode = connection.execute("PRAGMA journal_mode").fetchone()
         busy_timeout = connection.execute("PRAGMA busy_timeout").fetchone()
 
-    assert EXPECTED_TABLES <= {row[0] for row in table_rows}
-    assert version == ("0001_initial_schema",)
+    assert {row[0] for row in table_rows} >= EXPECTED_TABLES
+    assert version == ("0002_attempt_idempotency",)
     assert journal_mode == ("wal",)
     assert busy_timeout == (5000,)

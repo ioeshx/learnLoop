@@ -9,7 +9,6 @@ import sys
 import time
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -24,7 +23,9 @@ def require_command(command: str) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Start LearnLoop development services.")
+    parser = argparse.ArgumentParser(
+        description="Start LearnLoop development services."
+    )
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--backend-only", action="store_true")
     group.add_argument("--frontend-only", action="store_true")

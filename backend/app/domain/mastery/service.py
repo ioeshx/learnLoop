@@ -2,7 +2,6 @@
 
 from app.domain.mastery.models import MasteryEvent, MasteryEventType, MasterySnapshot
 
-
 _DEFAULT_DELTAS: dict[MasteryEventType, float] = {
     MasteryEventType.CORRECT_FIRST_TRY: 0.15,
     MasteryEventType.CORRECT_AFTER_REMEDIATION: 0.08,

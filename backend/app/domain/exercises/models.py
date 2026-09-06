@@ -51,9 +51,7 @@ class Exercise:
     ) -> "Exercise":
         return cls(
             id=new_id(),
-            knowledge_node_id=require_text(
-                knowledge_node_id, "knowledge_node_id"
-            ),
+            knowledge_node_id=require_text(knowledge_node_id, "knowledge_node_id"),
             exercise_type=ExerciseType.MULTIPLE_CHOICE,
             prompt=prompt,
             options=tuple(require_text(option, "option") for option in options),
@@ -88,9 +86,10 @@ class ExerciseAttempt:
         score: float,
         is_correct: bool,
         attempted_at: datetime | None = None,
+        attempt_id: str | None = None,
     ) -> "ExerciseAttempt":
         return cls(
-            id=new_id(),
+            id=attempt_id or new_id(),
             exercise_id=exercise_id,
             study_session_id=study_session_id,
             answer=answer,

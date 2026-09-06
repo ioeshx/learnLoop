@@ -6,9 +6,8 @@ Revises:
 
 from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 revision: str = "0001_initial_schema"
 down_revision: str | None = None
@@ -42,8 +41,10 @@ def upgrade() -> None:
             "weekly_minutes > 0", name="ck_learning_goals_weekly_minutes_positive"
         ),
         sa.ForeignKeyConstraint(
-            ["user_id"], ["users.id"],
-            name="fk_learning_goals_user_id_users", ondelete="CASCADE"
+            ["user_id"],
+            ["users.id"],
+            name="fk_learning_goals_user_id_users",
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_learning_goals"),
     )
@@ -64,8 +65,10 @@ def upgrade() -> None:
             name="ck_knowledge_nodes_difficulty_range",
         ),
         sa.ForeignKeyConstraint(
-            ["goal_id"], ["learning_goals.id"],
-            name="fk_knowledge_nodes_goal_id_learning_goals", ondelete="CASCADE"
+            ["goal_id"],
+            ["learning_goals.id"],
+            name="fk_knowledge_nodes_goal_id_learning_goals",
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_knowledge_nodes"),
         sa.UniqueConstraint("goal_id", "title", name="uq_knowledge_nodes_goal_id"),
@@ -84,22 +87,28 @@ def upgrade() -> None:
             name="ck_knowledge_edges_not_self_referencing",
         ),
         sa.ForeignKeyConstraint(
-            ["goal_id"], ["learning_goals.id"],
-            name="fk_knowledge_edges_goal_id_learning_goals", ondelete="CASCADE"
+            ["goal_id"],
+            ["learning_goals.id"],
+            name="fk_knowledge_edges_goal_id_learning_goals",
+            ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["source_node_id"], ["knowledge_nodes.id"],
+            ["source_node_id"],
+            ["knowledge_nodes.id"],
             name="fk_knowledge_edges_source_node_id_knowledge_nodes",
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["target_node_id"], ["knowledge_nodes.id"],
+            ["target_node_id"],
+            ["knowledge_nodes.id"],
             name="fk_knowledge_edges_target_node_id_knowledge_nodes",
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_knowledge_edges"),
         sa.UniqueConstraint(
-            "source_node_id", "target_node_id", "relation",
+            "source_node_id",
+            "target_node_id",
+            "relation",
             name="uq_knowledge_edges_source_node_id",
         ),
     )
@@ -116,8 +125,10 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.CheckConstraint("version > 0", name="ck_study_plans_version_positive"),
         sa.ForeignKeyConstraint(
-            ["goal_id"], ["learning_goals.id"],
-            name="fk_study_plans_goal_id_learning_goals", ondelete="CASCADE"
+            ["goal_id"],
+            ["learning_goals.id"],
+            name="fk_study_plans_goal_id_learning_goals",
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_study_plans"),
         sa.UniqueConstraint("goal_id", "version", name="uq_study_plans_goal_id"),
@@ -132,21 +143,22 @@ def upgrade() -> None:
         sa.Column("position", sa.Integer(), nullable=False),
         sa.Column("estimated_minutes", sa.Integer(), nullable=False),
         sa.Column("status", sa.String(length=30), nullable=False),
-        sa.CheckConstraint(
-            "position >= 0", name="ck_plan_items_position_non_negative"
-        ),
+        sa.CheckConstraint("position >= 0", name="ck_plan_items_position_non_negative"),
         sa.CheckConstraint(
             "estimated_minutes > 0",
             name="ck_plan_items_estimated_minutes_positive",
         ),
         sa.ForeignKeyConstraint(
-            ["knowledge_node_id"], ["knowledge_nodes.id"],
+            ["knowledge_node_id"],
+            ["knowledge_nodes.id"],
             name="fk_plan_items_knowledge_node_id_knowledge_nodes",
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
-            ["plan_id"], ["study_plans.id"],
-            name="fk_plan_items_plan_id_study_plans", ondelete="CASCADE"
+            ["plan_id"],
+            ["study_plans.id"],
+            name="fk_plan_items_plan_id_study_plans",
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_plan_items"),
         sa.UniqueConstraint("plan_id", "position", name="uq_plan_items_plan_id"),
@@ -161,12 +173,16 @@ def upgrade() -> None:
         sa.Column("started_at", sa.DateTime(), nullable=False),
         sa.Column("completed_at", sa.DateTime(), nullable=True),
         sa.ForeignKeyConstraint(
-            ["goal_id"], ["learning_goals.id"],
-            name="fk_study_sessions_goal_id_learning_goals", ondelete="CASCADE"
+            ["goal_id"],
+            ["learning_goals.id"],
+            name="fk_study_sessions_goal_id_learning_goals",
+            ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["plan_item_id"], ["plan_items.id"],
-            name="fk_study_sessions_plan_item_id_plan_items", ondelete="SET NULL"
+            ["plan_item_id"],
+            ["plan_items.id"],
+            name="fk_study_sessions_plan_item_id_plan_items",
+            ondelete="SET NULL",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_study_sessions"),
     )
@@ -186,7 +202,8 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.CheckConstraint("max_score > 0", name="ck_exercises_max_score_positive"),
         sa.ForeignKeyConstraint(
-            ["knowledge_node_id"], ["knowledge_nodes.id"],
+            ["knowledge_node_id"],
+            ["knowledge_nodes.id"],
             name="fk_exercises_knowledge_node_id_knowledge_nodes",
             ondelete="CASCADE",
         ),
@@ -208,11 +225,14 @@ def upgrade() -> None:
             "score >= 0", name="ck_exercise_attempts_score_non_negative"
         ),
         sa.ForeignKeyConstraint(
-            ["exercise_id"], ["exercises.id"],
-            name="fk_exercise_attempts_exercise_id_exercises", ondelete="CASCADE"
+            ["exercise_id"],
+            ["exercises.id"],
+            name="fk_exercise_attempts_exercise_id_exercises",
+            ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["study_session_id"], ["study_sessions.id"],
+            ["study_session_id"],
+            ["study_sessions.id"],
             name="fk_exercise_attempts_study_session_id_study_sessions",
             ondelete="CASCADE",
         ),
@@ -223,7 +243,8 @@ def upgrade() -> None:
     )
     op.create_index(
         "ix_exercise_attempts_study_session_id",
-        "exercise_attempts", ["study_session_id"]
+        "exercise_attempts",
+        ["study_session_id"],
     )
     op.create_table(
         "mastery_events",
@@ -239,29 +260,33 @@ def upgrade() -> None:
             name="ck_mastery_events_mastery_delta_range",
         ),
         sa.ForeignKeyConstraint(
-            ["attempt_id"], ["exercise_attempts.id"],
+            ["attempt_id"],
+            ["exercise_attempts.id"],
             name="fk_mastery_events_attempt_id_exercise_attempts",
             ondelete="SET NULL",
         ),
         sa.ForeignKeyConstraint(
-            ["knowledge_node_id"], ["knowledge_nodes.id"],
+            ["knowledge_node_id"],
+            ["knowledge_nodes.id"],
             name="fk_mastery_events_knowledge_node_id_knowledge_nodes",
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["user_id"], ["users.id"],
-            name="fk_mastery_events_user_id_users", ondelete="CASCADE"
+            ["user_id"],
+            ["users.id"],
+            name="fk_mastery_events_user_id_users",
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_mastery_events"),
     )
     op.create_index("ix_mastery_events_user_id", "mastery_events", ["user_id"])
     op.create_index(
-        "ix_mastery_events_knowledge_node_id",
-        "mastery_events", ["knowledge_node_id"]
+        "ix_mastery_events_knowledge_node_id", "mastery_events", ["knowledge_node_id"]
     )
     op.create_index(
         "ix_mastery_events_user_node",
-        "mastery_events", ["user_id", "knowledge_node_id"]
+        "mastery_events",
+        ["user_id", "knowledge_node_id"],
     )
     op.create_table(
         "mastery_snapshots",
@@ -288,13 +313,16 @@ def upgrade() -> None:
             name="ck_mastery_snapshots_correct_count_within_attempts",
         ),
         sa.ForeignKeyConstraint(
-            ["knowledge_node_id"], ["knowledge_nodes.id"],
+            ["knowledge_node_id"],
+            ["knowledge_nodes.id"],
             name="fk_mastery_snapshots_knowledge_node_id_knowledge_nodes",
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["user_id"], ["users.id"],
-            name="fk_mastery_snapshots_user_id_users", ondelete="CASCADE"
+            ["user_id"],
+            ["users.id"],
+            name="fk_mastery_snapshots_user_id_users",
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint(
             "user_id", "knowledge_node_id", name="pk_mastery_snapshots"
@@ -308,21 +336,23 @@ def upgrade() -> None:
         sa.Column("due_at", sa.DateTime(), nullable=False),
         sa.Column("last_review_at", sa.DateTime(), nullable=True),
         sa.ForeignKeyConstraint(
-            ["knowledge_node_id"], ["knowledge_nodes.id"],
+            ["knowledge_node_id"],
+            ["knowledge_nodes.id"],
             name="fk_review_schedules_knowledge_node_id_knowledge_nodes",
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["user_id"], ["users.id"],
-            name="fk_review_schedules_user_id_users", ondelete="CASCADE"
+            ["user_id"],
+            ["users.id"],
+            name="fk_review_schedules_user_id_users",
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint(
             "user_id", "knowledge_node_id", name="pk_review_schedules"
         ),
     )
     op.create_index(
-        "ix_review_schedules_user_due",
-        "review_schedules", ["user_id", "due_at"]
+        "ix_review_schedules_user_due", "review_schedules", ["user_id", "due_at"]
     )
 
 

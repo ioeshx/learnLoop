@@ -3,6 +3,7 @@
 from datetime import date, datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Date,
@@ -10,7 +11,6 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -19,7 +19,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database.base import Base
 from app.infrastructure.database.types import UTCDateTime
-
 
 UUID_LENGTH = 36
 
@@ -137,9 +136,7 @@ class PlanItemModel(Base):
 
 class StudySessionModel(Base):
     __tablename__ = "study_sessions"
-    __table_args__ = (
-        Index("ix_study_sessions_goal_status", "goal_id", "status"),
-    )
+    __table_args__ = (Index("ix_study_sessions_goal_status", "goal_id", "status"),)
 
     id: Mapped[str] = mapped_column(String(UUID_LENGTH), primary_key=True)
     goal_id: Mapped[str] = mapped_column(
@@ -155,9 +152,7 @@ class StudySessionModel(Base):
 
 class ExerciseModel(Base):
     __tablename__ = "exercises"
-    __table_args__ = (
-        CheckConstraint("max_score > 0", name="max_score_positive"),
-    )
+    __table_args__ = (CheckConstraint("max_score > 0", name="max_score_positive"),)
 
     id: Mapped[str] = mapped_column(String(UUID_LENGTH), primary_key=True)
     knowledge_node_id: Mapped[str] = mapped_column(
@@ -173,9 +168,7 @@ class ExerciseModel(Base):
 
 class ExerciseAttemptModel(Base):
     __tablename__ = "exercise_attempts"
-    __table_args__ = (
-        CheckConstraint("score >= 0", name="score_non_negative"),
-    )
+    __table_args__ = (CheckConstraint("score >= 0", name="score_non_negative"),)
 
     id: Mapped[str] = mapped_column(String(UUID_LENGTH), primary_key=True)
     exercise_id: Mapped[str] = mapped_column(
@@ -193,9 +186,8 @@ class ExerciseAttemptModel(Base):
 class MasteryEventModel(Base):
     __tablename__ = "mastery_events"
     __table_args__ = (
-        CheckConstraint(
-            "delta >= -1.0 AND delta <= 1.0", name="mastery_delta_range"
-        ),
+        CheckConstraint("delta >= -1.0 AND delta <= 1.0", name="mastery_delta_range"),
+        UniqueConstraint("attempt_id", name="uq_mastery_events_attempt_id"),
         Index("ix_mastery_events_user_node", "user_id", "knowledge_node_id"),
     )
 
@@ -239,9 +231,7 @@ class MasterySnapshotModel(Base):
 
 class ReviewScheduleModel(Base):
     __tablename__ = "review_schedules"
-    __table_args__ = (
-        Index("ix_review_schedules_user_due", "user_id", "due_at"),
-    )
+    __table_args__ = (Index("ix_review_schedules_user_due", "user_id", "due_at"),)
 
     user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True

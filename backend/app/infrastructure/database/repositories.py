@@ -9,7 +9,7 @@ from app.domain.exercises.models import Exercise, ExerciseAttempt, ExerciseType
 from app.domain.goals.models import GoalStatus, LearningGoal
 from app.domain.knowledge.graph import validate_knowledge_graph
 from app.domain.knowledge.models import KnowledgeEdge, KnowledgeNode, RelationType
-from app.domain.mastery.models import MasteryEvent, MasteryEventType, MasterySnapshot
+from app.domain.mastery.models import MasteryEvent, MasterySnapshot
 from app.domain.plans.models import (
     PlanItem,
     PlanItemStatus,
@@ -17,6 +17,7 @@ from app.domain.plans.models import (
     StudyPlanStatus,
 )
 from app.domain.review.models import ReviewSchedule
+from app.domain.sessions.models import StudySession, StudySessionStatus
 from app.domain.users.models import User
 from app.infrastructure.database.models import (
     ExerciseAttemptModel,
@@ -29,6 +30,7 @@ from app.infrastructure.database.models import (
     PlanItemModel,
     ReviewScheduleModel,
     StudyPlanModel,
+    StudySessionModel,
     UserModel,
 )
 
@@ -116,6 +118,10 @@ class SqlAlchemyKnowledgeRepository:
             )
         )
 
+    async def get_node(self, node_id: str) -> KnowledgeNode | None:
+        model = await self._session.get(KnowledgeNodeModel, node_id)
+        return _knowledge_node_from_model(model) if model is not None else None
+
     async def list_nodes(self, goal_id: str) -> list[KnowledgeNode]:
         result = await self._session.scalars(
             select(KnowledgeNodeModel)
@@ -176,6 +182,19 @@ class SqlAlchemyStudyPlanRepository:
         )
         return [await self._plan_from_model(model) for model in result]
 
+    async def get_item(self, item_id: str) -> PlanItem | None:
+        model = await self._session.get(PlanItemModel, item_id)
+        return _plan_item_from_model(model) if model is not None else None
+
+    async def update_item(self, item: PlanItem) -> None:
+        model = await self._session.get(PlanItemModel, item.id)
+        if model is None:
+            raise LookupError(f"plan item {item.id} was not found")
+        model.title = item.title
+        model.position = item.position
+        model.estimated_minutes = item.estimated_minutes
+        model.status = item.status.value
+
     async def _plan_from_model(self, model: StudyPlanModel) -> StudyPlan:
         item_result = await self._session.scalars(
             select(PlanItemModel)
@@ -226,6 +245,14 @@ class SqlAlchemyExerciseRepository:
         model = await self._session.get(ExerciseModel, exercise_id)
         return _exercise_from_model(model) if model is not None else None
 
+    async def list_for_node(self, knowledge_node_id: str) -> list[Exercise]:
+        result = await self._session.scalars(
+            select(ExerciseModel)
+            .where(ExerciseModel.knowledge_node_id == knowledge_node_id)
+            .order_by(ExerciseModel.created_at)
+        )
+        return [_exercise_from_model(model) for model in result]
+
     async def add_attempt(self, attempt: ExerciseAttempt) -> None:
         self._session.add(
             ExerciseAttemptModel(
@@ -239,6 +266,10 @@ class SqlAlchemyExerciseRepository:
             )
         )
 
+    async def get_attempt(self, attempt_id: str) -> ExerciseAttempt | None:
+        model = await self._session.get(ExerciseAttemptModel, attempt_id)
+        return _attempt_from_model(model) if model is not None else None
+
     async def list_attempts(self, exercise_id: str) -> list[ExerciseAttempt]:
         result = await self._session.scalars(
             select(ExerciseAttemptModel)
@@ -246,6 +277,35 @@ class SqlAlchemyExerciseRepository:
             .order_by(ExerciseAttemptModel.attempted_at)
         )
         return [_attempt_from_model(model) for model in result]
+
+    async def list_attempts_for_session(
+        self, study_session_id: str
+    ) -> list[ExerciseAttempt]:
+        result = await self._session.scalars(
+            select(ExerciseAttemptModel)
+            .where(ExerciseAttemptModel.study_session_id == study_session_id)
+            .order_by(ExerciseAttemptModel.attempted_at)
+        )
+        return [_attempt_from_model(model) for model in result]
+
+
+class SqlAlchemyStudySessionRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, study_session: StudySession) -> None:
+        self._session.add(_study_session_to_model(study_session))
+
+    async def get(self, session_id: str) -> StudySession | None:
+        model = await self._session.get(StudySessionModel, session_id)
+        return _study_session_from_model(model) if model is not None else None
+
+    async def update(self, study_session: StudySession) -> None:
+        model = await self._session.get(StudySessionModel, study_session.id)
+        if model is None:
+            raise LookupError(f"study session {study_session.id} was not found")
+        model.status = study_session.status.value
+        model.completed_at = study_session.completed_at
 
 
 class SqlAlchemyMasteryRepository:
@@ -291,9 +351,7 @@ class SqlAlchemyReviewRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get(
-        self, user_id: str, knowledge_node_id: str
-    ) -> ReviewSchedule | None:
+    async def get(self, user_id: str, knowledge_node_id: str) -> ReviewSchedule | None:
         model = await self._session.get(
             ReviewScheduleModel,
             {"user_id": user_id, "knowledge_node_id": knowledge_node_id},
@@ -397,6 +455,42 @@ def _exercise_from_model(model: ExerciseModel) -> Exercise:
         answer_key=tuple(model.answer_key),
         max_score=model.max_score,
         created_at=model.created_at,
+    )
+
+
+def _plan_item_from_model(model: PlanItemModel) -> PlanItem:
+    return PlanItem(
+        id=model.id,
+        plan_id=model.plan_id,
+        knowledge_node_id=model.knowledge_node_id,
+        title=model.title,
+        position=model.position,
+        estimated_minutes=model.estimated_minutes,
+        status=PlanItemStatus(model.status),
+    )
+
+
+def _study_session_to_model(study_session: StudySession) -> StudySessionModel:
+    return StudySessionModel(
+        id=study_session.id,
+        goal_id=study_session.goal_id,
+        plan_item_id=study_session.plan_item_id,
+        status=study_session.status.value,
+        started_at=study_session.started_at,
+        completed_at=study_session.completed_at,
+    )
+
+
+def _study_session_from_model(model: StudySessionModel) -> StudySession:
+    if model.plan_item_id is None:
+        raise ValueError(f"study session {model.id} has no plan item")
+    return StudySession(
+        id=model.id,
+        goal_id=model.goal_id,
+        plan_item_id=model.plan_item_id,
+        status=StudySessionStatus(model.status),
+        started_at=model.started_at,
+        completed_at=model.completed_at,
     )
 
 

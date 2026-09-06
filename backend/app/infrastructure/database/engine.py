@@ -24,9 +24,7 @@ class DbApiConnection(Protocol):
     def cursor(self) -> DbApiCursor: ...
 
 
-def configure_sqlite_connection(
-    dbapi_connection: DbApiConnection, _: object
-) -> None:
+def configure_sqlite_connection(dbapi_connection: DbApiConnection, _: object) -> None:
     """Apply invariants to a SQLite connection owned by this application."""
     # SQLAlchemy wraps the native connection when the aiosqlite driver is used,
     # but deliberately exposes the standard DB-API cursor contract here.

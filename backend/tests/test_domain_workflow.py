@@ -1,6 +1,6 @@
 """Pure-domain tests for the first deterministic learning workflow."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -21,8 +21,7 @@ from app.domain.mastery import (
 from app.domain.plans import StudyPlan
 from app.domain.users import User
 
-
-NOW = datetime(2026, 1, 10, 8, 30, tzinfo=timezone.utc)
+NOW = datetime(2026, 1, 10, 8, 30, tzinfo=UTC)
 
 
 def test_build_plan_grade_answer_and_project_mastery() -> None:

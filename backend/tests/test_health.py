@@ -1,10 +1,17 @@
 """Health endpoint tests."""
 
-from fastapi.testclient import TestClient
+import httpx
+import pytest
+
+from app.config import Settings
+from app.main import create_app
 
 
-def test_health_returns_service_metadata(client: TestClient) -> None:
-    response = client.get("/api/v1/health")
+@pytest.mark.asyncio
+async def test_health_returns_service_metadata(test_settings: Settings) -> None:
+    transport = httpx.ASGITransport(app=create_app(test_settings))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/health")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -15,8 +22,11 @@ def test_health_returns_service_metadata(client: TestClient) -> None:
     }
 
 
-def test_unknown_route_returns_not_found(client: TestClient) -> None:
-    response = client.get("/api/v1/does-not-exist")
+@pytest.mark.asyncio
+async def test_unknown_route_returns_not_found(test_settings: Settings) -> None:
+    transport = httpx.ASGITransport(app=create_app(test_settings))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/does-not-exist")
 
     assert response.status_code == 404
     assert response.json() == {

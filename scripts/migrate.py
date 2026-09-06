@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = PROJECT_ROOT / "backend"
 sys.path.insert(0, str(BACKEND_ROOT))
@@ -32,7 +31,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_config(database_url: str) -> "Config":
+def build_config(database_url: str) -> Config:
     from alembic.config import Config
 
     config = Config(BACKEND_ROOT / "alembic.ini")

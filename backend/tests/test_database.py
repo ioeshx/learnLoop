@@ -1,7 +1,7 @@
 """SQLite configuration, repository, and transaction integration tests."""
 
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 import pytest_asyncio
@@ -21,13 +21,12 @@ from app.domain.mastery import (
 )
 from app.domain.plans import StudyPlan
 from app.domain.review import ReviewSchedule
+from app.domain.sessions import StudySession
 from app.domain.users import User
 from app.infrastructure.database import Database, SqlAlchemyUnitOfWork, create_database
 from app.infrastructure.database.base import Base
-from app.infrastructure.database.models import StudySessionModel
 
-
-NOW = datetime(2026, 1, 10, 8, 30, tzinfo=timezone.utc)
+NOW = datetime(2026, 1, 10, 8, 30, tzinfo=UTC)
 
 
 @pytest_asyncio.fixture
@@ -179,6 +178,17 @@ async def test_attempt_mastery_and_review_round_trip(database: Database) -> None
         answer_key=["Queue"],
         now=NOW,
     )
+    plan = StudyPlan.create(
+        goal_id=goal.id,
+        item_specs=[(node.id, "Practice traversal", 20)],
+        now=NOW,
+    )
+    study_session = StudySession.create(
+        goal_id=goal.id,
+        plan_item_id=plan.items[0].id,
+        session_id="session-1",
+        now=NOW,
+    )
     grade = grade_multiple_choice(
         exercise, ["Queue"], study_session_id="session-1", attempted_at=NOW
     )
@@ -204,18 +214,9 @@ async def test_attempt_mastery_and_review_round_trip(database: Database) -> None
         await uow.users.add(user)
         await uow.goals.add(goal)
         await uow.knowledge.add_node(node)
+        await uow.plans.add(plan)
         await uow.exercises.add(exercise)
-        assert uow.session is not None
-        uow.session.add(
-            StudySessionModel(
-                id="session-1",
-                goal_id=goal.id,
-                plan_item_id=None,
-                status="completed",
-                started_at=NOW,
-                completed_at=NOW,
-            )
-        )
+        await uow.sessions.add(study_session)
         await uow.exercises.add_attempt(grade.attempt)
         await uow.mastery.add_event(event)
         await uow.mastery.save_snapshot(snapshot)
@@ -224,11 +225,13 @@ async def test_attempt_mastery_and_review_round_trip(database: Database) -> None
 
     async with SqlAlchemyUnitOfWork(database.session_factory) as uow:
         saved_exercise = await uow.exercises.get(exercise.id)
+        saved_session = await uow.sessions.get(study_session.id)
         saved_attempts = await uow.exercises.list_attempts(exercise.id)
         saved_snapshot = await uow.mastery.get_snapshot(user.id, node.id)
         due_reviews = await uow.reviews.list_due(user.id, NOW)
 
     assert saved_exercise == exercise
+    assert saved_session == study_session
     assert saved_attempts == [grade.attempt]
     assert saved_snapshot == snapshot
     assert due_reviews == [schedule]

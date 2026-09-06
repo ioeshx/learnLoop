@@ -23,6 +23,7 @@ def grade_multiple_choice(
     *,
     study_session_id: str,
     attempted_at: datetime | None = None,
+    attempt_id: str | None = None,
 ) -> ObjectiveGrade:
     if exercise.exercise_type != ExerciseType.MULTIPLE_CHOICE:
         raise UnsupportedExerciseError("only multiple-choice exercises are supported")
@@ -37,5 +38,6 @@ def grade_multiple_choice(
         score=exercise.max_score if is_correct else 0.0,
         is_correct=is_correct,
         attempted_at=attempted_at,
+        attempt_id=attempt_id,
     )
     return ObjectiveGrade(attempt=attempt, expected_answer=exercise.answer_key)

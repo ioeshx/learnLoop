@@ -11,14 +11,13 @@ from app.infrastructure.database.repositories import (
     SqlAlchemyMasteryRepository,
     SqlAlchemyReviewRepository,
     SqlAlchemyStudyPlanRepository,
+    SqlAlchemyStudySessionRepository,
     SqlAlchemyUserRepository,
 )
 
 
 class SqlAlchemyUnitOfWork:
-    def __init__(
-        self, session_factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
         self.session: AsyncSession | None = None
         self.users: SqlAlchemyUserRepository
@@ -26,6 +25,7 @@ class SqlAlchemyUnitOfWork:
         self.knowledge: SqlAlchemyKnowledgeRepository
         self.plans: SqlAlchemyStudyPlanRepository
         self.exercises: SqlAlchemyExerciseRepository
+        self.sessions: SqlAlchemyStudySessionRepository
         self.mastery: SqlAlchemyMasteryRepository
         self.reviews: SqlAlchemyReviewRepository
 
@@ -36,6 +36,7 @@ class SqlAlchemyUnitOfWork:
         self.knowledge = SqlAlchemyKnowledgeRepository(self.session)
         self.plans = SqlAlchemyStudyPlanRepository(self.session)
         self.exercises = SqlAlchemyExerciseRepository(self.session)
+        self.sessions = SqlAlchemyStudySessionRepository(self.session)
         self.mastery = SqlAlchemyMasteryRepository(self.session)
         self.reviews = SqlAlchemyReviewRepository(self.session)
         return self

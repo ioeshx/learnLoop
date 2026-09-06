@@ -1,12 +1,11 @@
 """Tests for the py-fsrs adapter."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.domain.review import ReviewRating
 from app.infrastructure.review import FsrsReviewScheduler
 
-
-NOW = datetime(2026, 1, 10, 8, 30, tzinfo=timezone.utc)
+NOW = datetime(2026, 1, 10, 8, 30, tzinfo=UTC)
 
 
 def test_fsrs_creates_and_advances_a_review_schedule() -> None:

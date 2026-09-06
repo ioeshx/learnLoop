@@ -7,7 +7,6 @@ from pydantic import BaseModel
 
 from app.config import Settings
 
-
 router = APIRouter()
 
 

@@ -23,8 +23,7 @@ class FsrsReviewScheduler:
     ) -> ScheduledReview:
         reviewed_at = require_aware_utc(reviewed_at, "reviewed_at")
         if current is not None and (
-            current.user_id != user_id
-            or current.knowledge_node_id != knowledge_node_id
+            current.user_id != user_id or current.knowledge_node_id != knowledge_node_id
         ):
             raise ValueError("current review schedule belongs to another card")
         card = (

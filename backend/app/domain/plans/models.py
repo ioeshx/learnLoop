@@ -1,6 +1,6 @@
 """Study plan entities."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
 
@@ -38,6 +38,9 @@ class PlanItem:
             raise ValueError("position must be non-negative")
         if self.estimated_minutes <= 0:
             raise ValueError("estimated_minutes must be positive")
+
+    def change_status(self, status: PlanItemStatus) -> "PlanItem":
+        return replace(self, status=status)
 
     @classmethod
     def create(
@@ -77,6 +80,20 @@ class StudyPlan:
             raise ValueError("plan item positions must be unique")
         if any(item.plan_id != self.id for item in self.items):
             raise ValueError("all plan items must belong to the plan")
+
+    def get_item(self, item_id: str) -> PlanItem | None:
+        return next((item for item in self.items if item.id == item_id), None)
+
+    def update_item_status(self, item_id: str, status: PlanItemStatus) -> "StudyPlan":
+        if self.get_item(item_id) is None:
+            raise LookupError(f"plan item {item_id} was not found")
+        return replace(
+            self,
+            items=tuple(
+                item.change_status(status) if item.id == item_id else item
+                for item in self.items
+            ),
+        )
 
     @classmethod
     def create(

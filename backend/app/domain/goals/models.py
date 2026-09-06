@@ -51,10 +51,11 @@ class LearningGoal:
         description: str = "",
         target_date: date | None = None,
         now: datetime | None = None,
+        goal_id: str | None = None,
     ) -> "LearningGoal":
         created_at = require_aware_utc(now or utc_now(), "now")
         return cls(
-            id=new_id(),
+            id=goal_id or new_id(),
             user_id=require_text(user_id, "user_id"),
             title=title,
             description=description.strip(),
