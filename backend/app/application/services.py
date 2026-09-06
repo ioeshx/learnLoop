@@ -10,7 +10,9 @@ from app.application.models import (
     AttemptResult,
     CreateGoalCommand,
     DueReview,
+    GradeAnswerCommand,
     PlanDetails,
+    ResourceSnippet,
     SessionDetails,
     StartSessionCommand,
     SubmitAttemptCommand,
@@ -18,7 +20,12 @@ from app.application.models import (
 from app.application.ports import UnitOfWork, UnitOfWorkFactory
 from app.application.templates import FixedCurriculumGenerator
 from app.domain.common import deterministic_id, utc_now
-from app.domain.exercises import Exercise, ExerciseAttempt, grade_multiple_choice
+from app.domain.exercises import (
+    Exercise,
+    ExerciseAttempt,
+    ObjectiveGrade,
+    grade_multiple_choice,
+)
 from app.domain.goals import GoalStatus, LearningGoal
 from app.domain.knowledge import KnowledgeNode
 from app.domain.mastery import (
@@ -271,6 +278,62 @@ class GetStudySession:
             if session is None:
                 raise NotFoundError("study session", session_id)
             return await _get_session_details(uow, session)
+
+
+class GetMasteryState:
+    def __init__(self, dependencies: ApplicationDependencies) -> None:
+        self._dependencies = dependencies
+
+    async def execute(self, knowledge_node_id: str) -> MasterySnapshot | None:
+        async with self._dependencies.uow_factory() as uow:
+            node = await uow.knowledge.get_node(knowledge_node_id)
+            if node is None:
+                raise NotFoundError("knowledge node", knowledge_node_id)
+            return await uow.mastery.get_snapshot(
+                DEFAULT_USER_ID, knowledge_node_id
+            )
+
+
+class SearchLearningResources:
+    """Stage-seven seam; returns no external sources until RAG is implemented."""
+
+    def __init__(self, dependencies: ApplicationDependencies) -> None:
+        self._dependencies = dependencies
+
+    async def execute(self, knowledge_node_id: str) -> tuple[ResourceSnippet, ...]:
+        async with self._dependencies.uow_factory() as uow:
+            node = await uow.knowledge.get_node(knowledge_node_id)
+            if node is None:
+                raise NotFoundError("knowledge node", knowledge_node_id)
+        return ()
+
+
+class GradeObjectiveAnswer:
+    def __init__(self, dependencies: ApplicationDependencies) -> None:
+        self._dependencies = dependencies
+
+    async def execute(self, command: GradeAnswerCommand) -> ObjectiveGrade:
+        now = self._dependencies.clock()
+        async with self._dependencies.uow_factory() as uow:
+            session = await uow.sessions.get(command.session_id)
+            if session is None:
+                raise NotFoundError("study session", command.session_id)
+            if session.status != StudySessionStatus.ACTIVE:
+                raise ConflictError("completed study sessions cannot accept answers")
+            exercise = await uow.exercises.get(command.exercise_id)
+            if exercise is None:
+                raise NotFoundError("exercise", command.exercise_id)
+            item = await uow.plans.get_item(session.plan_item_id)
+            if item is None:
+                raise NotFoundError("plan item", session.plan_item_id)
+            if exercise.knowledge_node_id != item.knowledge_node_id:
+                raise ConflictError("exercise does not belong to the study session")
+            return grade_multiple_choice(
+                exercise,
+                list(command.selected_options),
+                study_session_id=session.id,
+                attempted_at=now,
+            )
 
 
 class SubmitExerciseAttempt:

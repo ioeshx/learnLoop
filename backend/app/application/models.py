@@ -37,6 +37,20 @@ class SubmitAttemptCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class GradeAnswerCommand:
+    session_id: str
+    exercise_id: str
+    selected_options: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceSnippet:
+    resource_id: str
+    title: str
+    excerpt: str
+
+
+@dataclass(frozen=True, slots=True)
 class PlanDetails:
     plan: StudyPlan
     nodes: tuple[KnowledgeNode, ...]
