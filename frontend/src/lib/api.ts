@@ -127,6 +127,35 @@ export type AgentStreamResult = {
   lastEvent: AgentEvent | null;
 };
 
+export type LearningResource = {
+  id: string;
+  goal_id: string;
+  knowledge_node_id: string | null;
+  title: string;
+  source_type: "file" | "url";
+  source_uri: string | null;
+  original_filename: string | null;
+  media_type: string;
+  sha256: string;
+  size_bytes: number;
+  status: "processing" | "ready" | "failed";
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ResourceCitation = {
+  resource_id: string;
+  chunk_id: string;
+  title: string;
+  excerpt: string;
+  score: number;
+  page_number: number | null;
+  section: string | null;
+  locator: string | null;
+  source_uri: string | null;
+};
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
 
@@ -158,6 +187,14 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
 
 function postHeaders(idempotencyKey?: string): HeadersInit {
   return idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {};
+}
+
+async function checkedResponse(response: Response): Promise<Response> {
+  if (response.ok) return response;
+  const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
+  throw new Error(
+    body.error?.message ?? `请求失败，后端返回 ${response.status}`,
+  );
 }
 
 export function newIdempotencyKey(): string {
@@ -234,6 +271,61 @@ export function fetchDueReviews(dueBefore?: string): Promise<DueReview[]> {
     ? `?due_before=${encodeURIComponent(dueBefore)}`
     : "";
   return apiRequest<DueReview[]>(`/reviews/due${query}`);
+}
+
+export async function uploadResource(
+  file: File,
+  goalId: string,
+  knowledgeNodeId?: string,
+): Promise<LearningResource> {
+  const form = new FormData();
+  form.set("file", file);
+  form.set("goal_id", goalId);
+  if (knowledgeNodeId) form.set("knowledge_node_id", knowledgeNodeId);
+  const response = await checkedResponse(
+    await fetch(`${API_BASE_URL}/resources/files`, {
+      method: "POST",
+      body: form,
+    }),
+  );
+  return (await response.json()) as LearningResource;
+}
+
+export function importResourceUrl(
+  url: string,
+  goalId: string,
+  knowledgeNodeId?: string,
+): Promise<LearningResource> {
+  return apiRequest<LearningResource>("/resources/url", {
+    method: "POST",
+    body: JSON.stringify({
+      url,
+      goal_id: goalId,
+      knowledge_node_id: knowledgeNodeId || null,
+    }),
+  });
+}
+
+export function fetchResources(goalId: string): Promise<LearningResource[]> {
+  return apiRequest<LearningResource[]>(
+    `/resources?goal_id=${encodeURIComponent(goalId)}`,
+  );
+}
+
+export function searchResources(
+  query: string,
+  goalId: string,
+  knowledgeNodeId?: string,
+): Promise<ResourceCitation[]> {
+  const parameters = new URLSearchParams({ query, goal_id: goalId });
+  if (knowledgeNodeId) parameters.set("knowledge_node_id", knowledgeNodeId);
+  return apiRequest<ResourceCitation[]>(`/resources/search?${parameters}`);
+}
+
+export async function deleteResource(resourceId: string): Promise<void> {
+  await checkedResponse(
+    await fetch(`${API_BASE_URL}/resources/${resourceId}`, { method: "DELETE" }),
+  );
 }
 
 export function fetchAgentRun(runId: string): Promise<AgentRun> {

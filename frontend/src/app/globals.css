@@ -32,7 +32,8 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
@@ -178,7 +179,8 @@ a {
 }
 
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 0.85rem;
@@ -193,8 +195,13 @@ textarea {
   resize: vertical;
 }
 
+select {
+  width: 100%;
+}
+
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   border-color: rgba(36, 108, 80, 0.6);
   box-shadow: 0 0 0 0.22rem rgba(36, 108, 80, 0.1);
 }
@@ -354,6 +361,74 @@ button:disabled {
 .learning-stack {
   display: grid;
   gap: 1.4rem;
+}
+
+.resource-goal-field {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 1.25rem;
+  color: #33423a;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.resource-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.resource-search {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.7rem;
+  margin: 1rem 0 2rem;
+}
+
+.resource-search .secondary-button {
+  align-self: stretch;
+}
+
+.resource-list,
+.citation-list {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 2rem;
+}
+
+.resource-list h2,
+.citation-list h2 {
+  margin-bottom: 0.25rem;
+}
+
+.resource-row,
+.citation-card {
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.64);
+  padding: 1rem;
+}
+
+.resource-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.resource-row p,
+.citation-card p {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.citation-card span {
+  margin-left: 0.6rem;
+  color: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 700;
 }
 
 .agent-progress {
@@ -572,7 +647,12 @@ button:disabled {
   }
 
   .form-grid,
-  .result-metrics {
+  .result-metrics,
+  .resource-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .resource-search {
     grid-template-columns: 1fr;
   }
 

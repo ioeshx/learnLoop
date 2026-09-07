@@ -54,7 +54,13 @@ export default function PlanPage() {
     <main className="page-shell narrow-shell">
       <nav className="page-nav">
         <Link href="/">← 新建目标</Link>
-        <span>学习计划</span>
+        {plan ? (
+          <Link href={`/resources?goalId=${plan.goal_id}&planId=${plan.id}`}>
+            管理个人资料 →
+          </Link>
+        ) : (
+          <span>学习计划</span>
+        )}
       </nav>
 
       {loading ? <p className="loading-card">正在读取学习计划…</p> : null}

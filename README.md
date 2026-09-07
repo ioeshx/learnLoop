@@ -4,10 +4,11 @@ LearnLoop 是一个本地优先、跨平台的自适应学习 Agent 项目。项
 Next.js 提供 Web 界面，FastAPI 提供后端 API，并使用 SQLite 在本地保存学习目标、
 知识点、学习计划、练习、掌握度和复习计划。
 
-目前已经完成开发路线中的阶段一至阶段六：工程基础、SQLite 领域模型、端到端学习
-闭环、可选的 LLM 结构化内容生成、LangGraph 核心工作流，以及可恢复的
-Checkpoint / Interrupt / SSE。用户可以创建目标、生成计划、完成课程和练习；Agent
-可以在等待作答、评分确认和计划审批时暂停，并在刷新页面或应用重启后继续。
+目前已经完成开发路线中的阶段一至阶段七：工程基础、SQLite 领域模型、端到端学习
+闭环、可选的 LLM 结构化内容生成、LangGraph 核心工作流、可恢复的
+Checkpoint / Interrupt / SSE，以及本地文件与混合 RAG。用户可以导入个人 TXT、
+Markdown、PDF 或单个网页；Agent 会检索相关 Chunk，并在讲解和练习中展示可核验的
+页码或章节引用。
 
 ## 当前能力
 
@@ -17,7 +18,7 @@ Checkpoint / Interrupt / SSE。用户可以创建目标、生成计划、完成�
 - 学习目标、知识图、学习计划、练习、掌握度和复习领域模型。
 - 知识依赖环检测、客观题确定性判分和 FSRS 复习调度。
 - 无 LLM 的固定课程回退，以及完整的 Application Service 编排层。
-- 8 个 Pydantic 结构化输出契约和 6 个带版本的 Prompt。
+- 8 个 Pydantic 结构化输出契约和 7 个带版本的 Prompt。
 - 可替换的模型 Provider、Fake Provider 和 DeepSeek Provider。
 - 最多一次输出修复、瞬时错误重试、超时控制和 Token 统计。
 - LLM 生成的知识图、计划、讲解和练习必须经过领域规则才能持久化。
@@ -25,8 +26,12 @@ Checkpoint / Interrupt / SSE。用户可以创建目标、生成计划、完成�
 - SQLite `AsyncSqliteSaver`、稳定的 Run/Thread 映射和跨进程 Interrupt 恢复。
 - 作答、评分纠正、计划批准/编辑与资料歧义确认的人机协作节点。
 - 可持久化重放的节点、Tool 与运行事件，以及支持断线续传的 SSE API。
+- 内容寻址的本地文件存储、SHA-256 去重、原子移动、路径安全和删除回收。
+- TXT、Markdown、PDF、HTML 解析以及保留页码/章节的重叠分块。
+- SQLite FTS5 BM25、NumPy 余弦相似度和 Reciprocal Rank Fusion 混合检索。
+- 默认离线 Embedding，以及可选的 OpenAI-compatible `/embeddings` Provider。
 - 创建目标、获取计划、开始学习、提交答案、完成学习和查询复习的 REST API。
-- 创建目标、学习计划、学习会话和作答结果四个可刷新恢复的前端页面。
+- 创建目标、学习计划、个人资料库、学习会话和作答结果页面。
 - 请求幂等、事务回滚、领域测试、API 契约测试和前端 API 测试。
 
 ## 项目目录
@@ -78,11 +83,14 @@ LEARNLOOP_ENVIRONMENT=development
 LEARNLOOP_DATA_DIR=./data
 LEARNLOOP_LLM_PROVIDER=none
 LEARNLOOP_CHECKPOINT_RETENTION_DAYS=30
+LEARNLOOP_EMBEDDING_PROVIDER=local
+LEARNLOOP_EMBEDDING_DIMENSIONS=384
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000/api/v1
 ```
 
-业务 SQLite 数据库默认创建在 `data/db/learnloop.db`，Agent Checkpoint 和可重放事件
-保存在 `data/db/checkpoints.db`。保持 `LEARNLOOP_LLM_PROVIDER=none` 时不需要任何模型
+业务 SQLite 数据库和 RAG 索引默认创建在 `data/db/learnloop.db`，原始资料保存在
+`data/files/`，Agent Checkpoint 和可重放事件保存在 `data/db/checkpoints.db`。保持
+`LEARNLOOP_LLM_PROVIDER=none` 时不需要任何模型
 密钥，系统使用固定课程模板；每日学习 Agent 仍可运行，目标规划 Agent 需要启用模型。
 
 如需让 DeepSeek 生成知识图、计划、讲解和练习，在 `.env` 中配置：
@@ -97,7 +105,20 @@ LEARNLOOP_LLM_MAX_RETRIES=2
 ```
 
 模型生成在创建计划时发生。已生成过计划的目标会直接返回已有计划，不会重复调用
-模型。Embedding 在当前阶段仍未启用。
+模型。Embedding 默认使用完全离线的本地特征哈希实现。
+
+如需使用兼容 OpenAI Embeddings 协议的远程服务，可配置：
+
+```dotenv
+LEARNLOOP_EMBEDDING_PROVIDER=openai_compatible
+LEARNLOOP_EMBEDDING_MODEL=text-embedding-3-small
+LEARNLOOP_EMBEDDING_API_KEY=替换为你的密钥
+LEARNLOOP_EMBEDDING_BASE_URL=https://api.openai.com/v1
+LEARNLOOP_EMBEDDING_DIMENSIONS=384
+```
+
+使用远程 Embedding 时，导入的 Chunk 和检索文本会发送给配置的服务。保持 `local` 时
+所有资料和检索均留在本机。
 
 ## 方式一：使用 uv 运行
 
@@ -247,8 +268,9 @@ DeepSeek 模型生成；未配置模型时使用确定性模板：
 ```text
 创建学习目标
 → 生成结构化学习计划
+→ 在计划页导入个人资料并测试检索
 → 选择计划项并开始学习
-→ Agent 生成讲解并在练习处暂停
+→ Agent 检索个人资料，生成带引用讲解并在练习处暂停
 → 提交答案并确认或纠正评分
 → Agent 更新掌握度和下次复习时间
 → 完成学习会话
@@ -355,3 +377,4 @@ PowerShell 禁止执行激活脚本，需要根据本机安全策略允许当前
 - [分阶段实现流程](docs/implementation-roadmap.md)
 - [LangGraph 核心工作流](docs/architecture/langgraph-workflows.md)
 - [Checkpoint、Interrupt 与 SSE](docs/architecture/checkpoint-interrupt-sse.md)
+- [本地文件与 RAG](docs/architecture/local-rag.md)
