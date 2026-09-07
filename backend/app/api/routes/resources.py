@@ -6,22 +6,29 @@ import httpx
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 
-from app.api.dependencies import RagServiceDep
-from app.api.schemas import CitationResponse, IngestUrlRequest, ResourceResponse
+from app.api.dependencies import JobServiceDep, RagServiceDep
+from app.api.schemas import (
+    BackgroundJobResponse,
+    CitationResponse,
+    IngestUrlRequest,
+    ResourceImportResponse,
+    ResourceResponse,
+)
 
 router = APIRouter(prefix="/resources")
 
 
-@router.post("/files", response_model=ResourceResponse, status_code=201)
+@router.post("/files", response_model=ResourceImportResponse, status_code=202)
 async def upload_resource_file(
     service: RagServiceDep,
+    jobs: JobServiceDep,
     file: Annotated[UploadFile, File()],
     goal_id: Annotated[str, Form(min_length=1)],
     knowledge_node_id: Annotated[str | None, Form()] = None,
     title: Annotated[str | None, Form(max_length=500)] = None,
-) -> ResourceResponse:
+) -> ResourceImportResponse:
     try:
-        resource = await service.ingest_file(
+        resource = await service.prepare_file(
             file.file,
             filename=file.filename or "document.txt",
             media_type=file.content_type or "application/octet-stream",
@@ -29,6 +36,7 @@ async def upload_resource_file(
             knowledge_node_id=knowledge_node_id,
             title=title,
         )
+        job = await jobs.enqueue_resource(resource.id)
     except ValueError as error:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -41,20 +49,24 @@ async def upload_resource_file(
         ) from error
     finally:
         await file.close()
-    return ResourceResponse.from_domain(resource)
+    return ResourceImportResponse(
+        resource=ResourceResponse.from_domain(resource),
+        job=BackgroundJobResponse.from_domain(job),
+    )
 
 
-@router.post("/url", response_model=ResourceResponse, status_code=201)
+@router.post("/url", response_model=ResourceImportResponse, status_code=202)
 async def import_resource_url(
-    payload: IngestUrlRequest, service: RagServiceDep
-) -> ResourceResponse:
+    payload: IngestUrlRequest, service: RagServiceDep, jobs: JobServiceDep
+) -> ResourceImportResponse:
     try:
-        resource = await service.ingest_url(
+        resource = await service.prepare_url(
             payload.url,
             goal_id=payload.goal_id,
             knowledge_node_id=payload.knowledge_node_id,
             title=payload.title,
         )
+        job = await jobs.enqueue_resource(resource.id)
     except ValueError as error:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -65,7 +77,10 @@ async def import_resource_url(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="failed to fetch the web resource",
         ) from error
-    return ResourceResponse.from_domain(resource)
+    return ResourceImportResponse(
+        resource=ResourceResponse.from_domain(resource),
+        job=BackgroundJobResponse.from_domain(job),
+    )
 
 
 @router.get("", response_model=list[ResourceResponse])
@@ -111,6 +126,9 @@ async def get_resource(
 
 
 @router.delete("/{resource_id}", status_code=204)
-async def delete_resource(resource_id: str, service: RagServiceDep) -> Response:
+async def delete_resource(
+    resource_id: str, service: RagServiceDep, jobs: JobServiceDep
+) -> Response:
+    await jobs.cancel_resource_jobs(resource_id)
     await service.delete(resource_id)
     return Response(status_code=204)

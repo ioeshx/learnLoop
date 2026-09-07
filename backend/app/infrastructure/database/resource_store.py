@@ -85,6 +85,10 @@ class SqliteResourceStore:
         async with self._write_lock:
             try:
                 await self._connection.execute("BEGIN IMMEDIATE")
+                await self._connection.execute(
+                    "DELETE FROM document_chunks WHERE resource_id = ?",
+                    (resource_id,),
+                )
                 await self._connection.executemany(
                     """
                     INSERT INTO document_chunks (
@@ -118,6 +122,28 @@ class SqliteResourceStore:
                 if cursor.rowcount != 1:
                     raise LookupError(f"learning resource {resource_id} was not found")
                 await cursor.close()
+                await self._connection.commit()
+            except BaseException:
+                await self._connection.rollback()
+                raise
+
+    async def begin_processing(self, resource_id: str) -> None:
+        async with self._write_lock:
+            try:
+                cursor = await self._connection.execute(
+                    """
+                    UPDATE learning_resources
+                    SET status = 'processing', error = NULL, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (datetime.now(UTC).isoformat(), resource_id),
+                )
+                updated = cursor.rowcount == 1
+                await cursor.close()
+                if not updated:
+                    raise LookupError(
+                        f"learning resource {resource_id} was not found"
+                    )
                 await self._connection.commit()
             except BaseException:
                 await self._connection.rollback()

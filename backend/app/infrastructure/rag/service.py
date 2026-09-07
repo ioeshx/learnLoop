@@ -1,7 +1,7 @@
-"""Synchronous resource ingestion and hybrid retrieval orchestration."""
+"""Resource preparation, indexing, and hybrid retrieval orchestration."""
 
 import io
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO
@@ -14,6 +14,7 @@ from app.domain.resources import (
     LearningResource,
     ResourceCitation,
     ResourceSourceType,
+    ResourceStatus,
 )
 from app.infrastructure.database import SqliteResourceStore
 from app.infrastructure.embeddings import EmbeddingProvider
@@ -60,6 +61,26 @@ class RagService:
         knowledge_node_id: str | None = None,
         title: str | None = None,
     ) -> LearningResource:
+        resource = await self.prepare_file(
+            source,
+            filename=filename,
+            media_type=media_type,
+            goal_id=goal_id,
+            knowledge_node_id=knowledge_node_id,
+            title=title,
+        )
+        return await self.process_resource(resource.id)
+
+    async def prepare_file(
+        self,
+        source: BinaryIO,
+        *,
+        filename: str,
+        media_type: str,
+        goal_id: str,
+        knowledge_node_id: str | None = None,
+        title: str | None = None,
+    ) -> LearningResource:
         await self._validate_scope(goal_id, knowledge_node_id)
         stored = self._storage.save(source)
         duplicate = await self._store.find_duplicate(
@@ -69,23 +90,11 @@ class RagService:
         )
         if duplicate is not None:
             return duplicate
-        try:
-            with self._storage.open(stored.key) as stored_file:
-                content = stored_file.read()
-            parsed = parse_document(
-                content,
-                filename=filename,
-                media_type=media_type or "application/octet-stream",
-            )
-        except BaseException:
-            if not stored.deduplicated:
-                self._storage.recycle(stored.key)
-            raise
         resource = LearningResource.create(
             user_id=self._user_id,
             goal_id=goal_id,
             knowledge_node_id=knowledge_node_id,
-            title=title or parsed.title or Path(filename).stem,
+            title=title or Path(filename).stem,
             source_type=ResourceSourceType.FILE,
             source_uri=None,
             original_filename=filename,
@@ -96,11 +105,25 @@ class RagService:
             now=self._clock(),
         )
         stored_resource = await self._store.add(resource)
-        if stored_resource.id != resource.id:
-            return stored_resource
-        return await self._index(resource, parsed)
+        return stored_resource
 
     async def ingest_url(
+        self,
+        url: str,
+        *,
+        goal_id: str,
+        knowledge_node_id: str | None = None,
+        title: str | None = None,
+    ) -> LearningResource:
+        resource = await self.prepare_url(
+            url,
+            goal_id=goal_id,
+            knowledge_node_id=knowledge_node_id,
+            title=title,
+        )
+        return await self.process_resource(resource.id)
+
+    async def prepare_url(
         self,
         url: str,
         *,
@@ -119,21 +142,11 @@ class RagService:
         if duplicate is not None:
             return duplicate
         filename = Path(urlsplit(page.final_url).path).name or "web-page.html"
-        try:
-            parsed = parse_document(
-                page.content,
-                filename=filename,
-                media_type=page.media_type,
-            )
-        except BaseException:
-            if not stored.deduplicated:
-                self._storage.recycle(stored.key)
-            raise
         resource = LearningResource.create(
             user_id=self._user_id,
             goal_id=goal_id,
             knowledge_node_id=knowledge_node_id,
-            title=title or parsed.title or page.final_url,
+            title=title or filename or page.final_url,
             source_type=ResourceSourceType.URL,
             source_uri=page.final_url,
             original_filename=None,
@@ -144,9 +157,37 @@ class RagService:
             now=self._clock(),
         )
         stored_resource = await self._store.add(resource)
-        if stored_resource.id != resource.id:
-            return stored_resource
-        return await self._index(resource, parsed)
+        return stored_resource
+
+    async def process_resource(
+        self,
+        resource_id: str,
+        *,
+        report_progress: Callable[[int, str], Awaitable[None]] | None = None,
+    ) -> LearningResource:
+        resource = await self.get(resource_id)
+        if resource.status == ResourceStatus.READY:
+            return resource
+        await self._store.begin_processing(resource.id)
+        if report_progress is not None:
+            await report_progress(10, "正在读取原始资料")
+        try:
+            with self._storage.open(resource.storage_key) as stored_file:
+                content = stored_file.read()
+            filename = resource.original_filename or "web-page.html"
+            if report_progress is not None:
+                await report_progress(25, "正在解析文档")
+            parsed = parse_document(
+                content,
+                filename=filename,
+                media_type=resource.media_type,
+            )
+            return await self._index(
+                resource, parsed, report_progress=report_progress
+            )
+        except BaseException as error:
+            await self._store.fail(resource.id, str(error))
+            raise
 
     async def get(self, resource_id: str) -> LearningResource:
         resource = await self._store.get(resource_id)
@@ -211,38 +252,43 @@ class RagService:
         await self._store.close()
 
     async def _index(
-        self, resource: LearningResource, parsed: ParsedDocument
+        self,
+        resource: LearningResource,
+        parsed: ParsedDocument,
+        *,
+        report_progress: Callable[[int, str], Awaitable[None]] | None = None,
     ) -> LearningResource:
-        try:
-            text_chunks = chunk_document(
-                parsed,
-                chunk_size=self._chunk_size,
-                overlap=self._chunk_overlap,
+        text_chunks = chunk_document(
+            parsed,
+            chunk_size=self._chunk_size,
+            overlap=self._chunk_overlap,
+        )
+        if report_progress is not None:
+            await report_progress(45, f"已生成 {len(text_chunks)} 个文档块")
+            await report_progress(55, "正在生成 Embedding")
+        vectors = await self._embeddings.embed_documents(
+            [chunk.content for chunk in text_chunks]
+        )
+        if len(vectors) != len(text_chunks):
+            raise ValueError("embedding provider returned an invalid vector count")
+        chunks = [
+            DocumentChunk.create(
+                resource_id=resource.id,
+                position=position,
+                content=text_chunk.content,
+                token_count=text_chunk.token_count,
+                page_number=text_chunk.page_number,
+                section=text_chunk.section,
+                embedding=vector,
+                embedding_model=self._embeddings.model_name,
             )
-            vectors = await self._embeddings.embed_documents(
-                [chunk.content for chunk in text_chunks]
+            for position, (text_chunk, vector) in enumerate(
+                zip(text_chunks, vectors, strict=True)
             )
-            if len(vectors) != len(text_chunks):
-                raise ValueError("embedding provider returned an invalid vector count")
-            chunks = [
-                DocumentChunk.create(
-                    resource_id=resource.id,
-                    position=position,
-                    content=text_chunk.content,
-                    token_count=text_chunk.token_count,
-                    page_number=text_chunk.page_number,
-                    section=text_chunk.section,
-                    embedding=vector,
-                    embedding_model=self._embeddings.model_name,
-                )
-                for position, (text_chunk, vector) in enumerate(
-                    zip(text_chunks, vectors, strict=True)
-                )
-            ]
-            await self._store.finish(resource.id, chunks)
-        except BaseException as error:
-            await self._store.fail(resource.id, str(error))
-            raise
+        ]
+        if report_progress is not None:
+            await report_progress(90, "正在写入 SQLite 检索索引")
+        await self._store.finish(resource.id, chunks)
         indexed = await self._store.get(resource.id)
         if indexed is None:
             raise RuntimeError("indexed learning resource disappeared")

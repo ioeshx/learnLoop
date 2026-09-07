@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -300,3 +301,55 @@ class DocumentChunkModel(Base):
     section: Mapped[str | None] = mapped_column(String(500), nullable=True)
     embedding: Mapped[list[float]] = mapped_column(JSON)
     embedding_model: Mapped[str] = mapped_column(String(200))
+
+
+class BackgroundJobModel(Base):
+    __tablename__ = "background_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
+            name="background_jobs_status",
+        ),
+        CheckConstraint(
+            "progress >= 0 AND progress <= 100",
+            name="background_jobs_progress",
+        ),
+        CheckConstraint(
+            "attempts >= 0 AND max_attempts > 0 AND attempts <= max_attempts",
+            name="background_jobs_attempts",
+        ),
+        Index("ix_background_jobs_claim", "status", "available_at", "created_at"),
+        Index("ix_background_jobs_lease", "status", "lease_expires_at"),
+        Index("ix_background_jobs_type_created", "job_type", "created_at"),
+        Index(
+            "uq_background_jobs_type_idempotency",
+            "job_type",
+            "idempotency_key",
+            unique=True,
+            sqlite_where=text("idempotency_key IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(UUID_LENGTH), primary_key=True)
+    job_type: Mapped[str] = mapped_column(String(100))
+    payload_json: Mapped[str] = mapped_column(Text)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(30))
+    progress: Mapped[int] = mapped_column(Integer)
+    progress_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(300), nullable=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer)
+    max_attempts: Mapped[int] = mapped_column(Integer)
+    available_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    lease_owner: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
+    cancel_requested: Mapped[bool] = mapped_column(Boolean)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime())

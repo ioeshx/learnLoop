@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     resource_chunk_size: int = Field(default=1000, ge=100, le=8000)
     resource_chunk_overlap: int = Field(default=150, ge=0, le=2000)
     web_fetch_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    worker_poll_interval_seconds: float = Field(default=0.5, gt=0, le=60)
+    worker_lease_seconds: float = Field(default=60.0, ge=5, le=3600)
+    job_max_attempts: int = Field(default=3, ge=1, le=20)
+    job_retry_base_seconds: float = Field(default=2.0, ge=0, le=3600)
+    job_retry_max_seconds: float = Field(default=60.0, ge=0, le=86400)
 
     @field_validator("api_prefix")
     @classmethod
@@ -125,6 +130,10 @@ class Settings(BaseSettings):
             )
         if self.resource_chunk_overlap >= self.resource_chunk_size:
             raise ValueError("resource_chunk_overlap must be less than chunk size")
+        if self.job_retry_base_seconds > self.job_retry_max_seconds:
+            raise ValueError(
+                "job_retry_base_seconds must not exceed job_retry_max_seconds"
+            )
         return self
 
     @property

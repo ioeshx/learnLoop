@@ -49,3 +49,8 @@ def test_remote_embedding_provider_requires_api_key() -> None:
 def test_resource_chunk_overlap_must_be_smaller_than_chunk() -> None:
     with pytest.raises(ValidationError, match="overlap must be less"):
         Settings(resource_chunk_size=200, resource_chunk_overlap=200)
+
+
+def test_job_retry_window_must_be_ordered() -> None:
+    with pytest.raises(ValidationError, match="job_retry_base_seconds"):
+        Settings(job_retry_base_seconds=10, job_retry_max_seconds=5)

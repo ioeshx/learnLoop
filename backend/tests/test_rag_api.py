@@ -11,6 +11,7 @@ import pytest
 from app.application import SearchLearningResources
 from app.config import Settings
 from app.main import create_app
+from app.workers.bootstrap import open_background_worker
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -59,17 +60,32 @@ async def test_markdown_resource_is_deduplicated_searchable_and_recycled(
                 data={"goal_id": goal_id, "knowledge_node_id": node_id},
                 files={"file": ("graphs.md", document, "text/markdown")},
             )
-            assert uploaded.status_code == 201
-            resource = uploaded.json()
-            assert resource["status"] == "ready"
+            assert uploaded.status_code == 202
+            submission = uploaded.json()
+            resource = submission["resource"]
+            job = submission["job"]
+            assert resource["status"] == "processing"
+            assert job["status"] == "queued"
             assert resource["sha256"]
+
+            async with open_background_worker(settings) as worker:
+                completed = await worker.run_once()
+            assert completed is not None
+            assert completed.id == job["id"]
+            assert completed.status.value == "succeeded"
+
+            indexed = await client.get(f"/api/v1/resources/{resource['id']}")
+            assert indexed.json()["status"] == "ready"
+            completed_job = await client.get(f"/api/v1/jobs/{job['id']}")
+            assert completed_job.json()["progress"] == 100
 
             duplicate = await client.post(
                 "/api/v1/resources/files",
                 data={"goal_id": goal_id, "knowledge_node_id": node_id},
                 files={"file": ("copy.md", document, "text/markdown")},
             )
-            assert duplicate.json()["id"] == resource["id"]
+            assert duplicate.json()["resource"]["id"] == resource["id"]
+            assert duplicate.json()["job"]["id"] == job["id"]
 
             searched = await client.get(
                 "/api/v1/resources/search",

@@ -9,6 +9,7 @@ from app.agent.execution import AgentEvent, AgentRun
 from app.application.models import AttemptResult, DueReview, PlanDetails, SessionDetails
 from app.domain.goals import LearningGoal
 from app.domain.resources import LearningResource, ResourceCitation
+from app.workers import BackgroundJob
 
 
 class RequestModel(BaseModel):
@@ -287,6 +288,60 @@ class ResourceResponse(BaseModel):
             created_at=resource.created_at,
             updated_at=resource.updated_at,
         )
+
+
+class BackgroundJobResponse(BaseModel):
+    id: str
+    job_type: str
+    payload: dict[str, JsonValue]
+    result: dict[str, JsonValue] | None
+    status: str
+    progress: int
+    progress_message: str | None
+    attempts: int
+    max_attempts: int
+    available_at: datetime
+    cancel_requested: bool
+    last_error: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    updated_at: datetime
+
+    @classmethod
+    def from_domain(cls, job: BackgroundJob) -> "BackgroundJobResponse":
+        return cls(
+            id=job.id,
+            job_type=job.job_type.value,
+            payload=job.payload,
+            result=job.result,
+            status=job.status.value,
+            progress=job.progress,
+            progress_message=job.progress_message,
+            attempts=job.attempts,
+            max_attempts=job.max_attempts,
+            available_at=job.available_at,
+            cancel_requested=job.cancel_requested,
+            last_error=job.last_error,
+            created_at=job.created_at,
+            started_at=job.started_at,
+            finished_at=job.finished_at,
+            updated_at=job.updated_at,
+        )
+
+
+class ResourceImportResponse(BaseModel):
+    resource: ResourceResponse
+    job: BackgroundJobResponse
+
+
+class WeeklyReportJobRequest(RequestModel):
+    goal_id: str | None = Field(default=None, min_length=1)
+    days: int = Field(default=7, ge=1, le=90)
+
+
+class DueReviewJobRequest(RequestModel):
+    due_before: datetime | None = None
 
 
 class CitationResponse(BaseModel):

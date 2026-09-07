@@ -34,6 +34,7 @@ from app.infrastructure.rag import RagService
 from app.infrastructure.review import FsrsReviewScheduler
 from app.infrastructure.storage import LocalDocumentStorage
 from app.logging import configure_logging
+from app.workers import JobService, SqliteJobStore
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -48,6 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         structured_model: StructuredModel | None = None
         remote_embedding: OpenAICompatibleEmbeddingProvider | None = None
         resource_store: SqliteResourceStore | None = None
+        job_store: SqliteJobStore | None = None
         rag_service: RagService | None = None
         curriculum_generator = None
         if resolved_settings.llm_provider == "deepseek":
@@ -73,6 +75,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             resource_store = await SqliteResourceStore.open(
                 resolved_settings.database_path
             )
+            job_store = await SqliteJobStore.open(resolved_settings.database_path)
             if resolved_settings.embedding_provider == "openai_compatible":
                 embedding_api_key = resolved_settings.embedding_api_key
                 if embedding_api_key is None:
@@ -107,6 +110,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 chunk_overlap=resolved_settings.resource_chunk_overlap,
             )
             lifespan_app.state.rag_service = rag_service
+            lifespan_app.state.job_service = JobService(
+                store=job_store,
+                clock=utc_now,
+                max_attempts=resolved_settings.job_max_attempts,
+            )
             application_dependencies = ApplicationDependencies(
                 uow_factory=uow_factory,
                 review_scheduler=FsrsReviewScheduler(),
@@ -124,6 +132,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await rag_service.close()
             elif resource_store is not None:
                 await resource_store.close()
+            if job_store is not None:
+                await job_store.close()
             if remote_embedding is not None:
                 await remote_embedding.aclose()
             if model_provider is not None:

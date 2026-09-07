@@ -53,6 +53,19 @@ def main() -> int:
                 PROJECT_ROOT / "backend",
             )
         )
+        commands.append(
+            (
+                [
+                    require_command("uv"),
+                    "run",
+                    "--project",
+                    str(PROJECT_ROOT / "backend"),
+                    "python",
+                    str(PROJECT_ROOT / "scripts" / "run_worker.py"),
+                ],
+                PROJECT_ROOT,
+            )
+        )
 
     if not args.backend_only:
         commands.append(
