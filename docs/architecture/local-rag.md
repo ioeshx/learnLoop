@@ -16,8 +16,8 @@
 → Agent Tool 与可验证引用
 ```
 
-本阶段有意保持同步执行。阶段八会在不改变存储、解析和检索接口的前提下，把耗时导入
-迁移到 SQLite Worker。
+阶段八已经在不改变存储、解析和检索接口的前提下，将解析、切块和 Embedding 迁移到
+SQLite Worker。HTTP 请求只负责校验范围、获取或保存原始资料并持久化 Job。
 
 ## 文件存储
 
@@ -73,7 +73,7 @@ Chunk 保存 `page_number` 或 `section`，引用不依赖模型推测定位信�
 - `FakeEmbeddingProvider`：测试中精确控制向量和预期排名。
 
 切换远程 Provider 不需要重写解析和检索层。现有 Chunk 会保留生成时的
-`embedding_model`；切换模型后的批量重建索引属于阶段八后台任务。
+`embedding_model`。切换模型后的批量重建入口仍留作后续管理功能。
 
 ## 混合检索
 

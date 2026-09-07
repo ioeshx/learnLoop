@@ -156,6 +156,30 @@ export type ResourceCitation = {
   source_uri: string | null;
 };
 
+export type BackgroundJob = {
+  id: string;
+  job_type: "resource.process" | "report.weekly" | "reviews.generate_due";
+  payload: Record<string, unknown>;
+  result: Record<string, unknown> | null;
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  progress: number;
+  progress_message: string | null;
+  attempts: number;
+  max_attempts: number;
+  available_at: string;
+  cancel_requested: boolean;
+  last_error: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  updated_at: string;
+};
+
+export type ResourceImportResult = {
+  resource: LearningResource;
+  job: BackgroundJob;
+};
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
 
@@ -277,7 +301,7 @@ export async function uploadResource(
   file: File,
   goalId: string,
   knowledgeNodeId?: string,
-): Promise<LearningResource> {
+): Promise<ResourceImportResult> {
   const form = new FormData();
   form.set("file", file);
   form.set("goal_id", goalId);
@@ -288,15 +312,15 @@ export async function uploadResource(
       body: form,
     }),
   );
-  return (await response.json()) as LearningResource;
+  return (await response.json()) as ResourceImportResult;
 }
 
 export function importResourceUrl(
   url: string,
   goalId: string,
   knowledgeNodeId?: string,
-): Promise<LearningResource> {
-  return apiRequest<LearningResource>("/resources/url", {
+): Promise<ResourceImportResult> {
+  return apiRequest<ResourceImportResult>("/resources/url", {
     method: "POST",
     body: JSON.stringify({
       url,
@@ -304,6 +328,26 @@ export function importResourceUrl(
       knowledge_node_id: knowledgeNodeId || null,
     }),
   });
+}
+
+export function fetchJob(jobId: string): Promise<BackgroundJob> {
+  return apiRequest<BackgroundJob>(`/jobs/${jobId}`);
+}
+
+export function fetchJobs(
+  jobType?: BackgroundJob["job_type"],
+): Promise<BackgroundJob[]> {
+  const parameters = new URLSearchParams({ limit: "200" });
+  if (jobType) parameters.set("job_type", jobType);
+  return apiRequest<BackgroundJob[]>(`/jobs?${parameters}`);
+}
+
+export function cancelJob(jobId: string): Promise<BackgroundJob> {
+  return apiRequest<BackgroundJob>(`/jobs/${jobId}/cancel`, { method: "POST" });
+}
+
+export function retryJob(jobId: string): Promise<BackgroundJob> {
+  return apiRequest<BackgroundJob>(`/jobs/${jobId}/retry`, { method: "POST" });
 }
 
 export function fetchResources(goalId: string): Promise<LearningResource[]> {

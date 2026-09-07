@@ -9,33 +9,37 @@ describe("resource API client", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          id: "resource-1",
-          goal_id: "goal-1",
-          knowledge_node_id: "node-1",
-          title: "notes",
-          source_type: "file",
-          source_uri: null,
-          original_filename: "notes.md",
-          media_type: "text/markdown",
-          sha256: "abc",
-          size_bytes: 12,
-          status: "ready",
-          error: null,
-          created_at: "2026-09-07T00:00:00Z",
-          updated_at: "2026-09-07T00:00:00Z",
+          resource: {
+            id: "resource-1",
+            goal_id: "goal-1",
+            knowledge_node_id: "node-1",
+            title: "notes",
+            source_type: "file",
+            source_uri: null,
+            original_filename: "notes.md",
+            media_type: "text/markdown",
+            sha256: "abc",
+            size_bytes: 12,
+            status: "processing",
+            error: null,
+            created_at: "2026-09-07T00:00:00Z",
+            updated_at: "2026-09-07T00:00:00Z",
+          },
+          job: { id: "job-1", status: "queued" },
         }),
-        { status: 201 },
+        { status: 202 },
       ),
     );
 
-    const resource = await uploadResource(
+    const submission = await uploadResource(
       new File(["# BFS"], "notes.md", { type: "text/markdown" }),
       "goal-1",
       "node-1",
     );
 
     const request = fetchMock.mock.calls[0][1];
-    expect(resource.id).toBe("resource-1");
+    expect(submission.resource.id).toBe("resource-1");
+    expect(submission.job.id).toBe("job-1");
     expect(request?.body).toBeInstanceOf(FormData);
     expect(request?.headers).toBeUndefined();
   });

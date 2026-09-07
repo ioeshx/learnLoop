@@ -4,11 +4,11 @@ LearnLoop 是一个本地优先、跨平台的自适应学习 Agent 项目。项
 Next.js 提供 Web 界面，FastAPI 提供后端 API，并使用 SQLite 在本地保存学习目标、
 知识点、学习计划、练习、掌握度和复习计划。
 
-目前已经完成开发路线中的阶段一至阶段七：工程基础、SQLite 领域模型、端到端学习
+目前已经完成开发路线中的阶段一至阶段八：工程基础、SQLite 领域模型、端到端学习
 闭环、可选的 LLM 结构化内容生成、LangGraph 核心工作流、可恢复的
-Checkpoint / Interrupt / SSE，以及本地文件与混合 RAG。用户可以导入个人 TXT、
-Markdown、PDF 或单个网页；Agent 会检索相关 Chunk，并在讲解和练习中展示可核验的
-页码或章节引用。
+Checkpoint / Interrupt / SSE、本地文件与混合 RAG，以及 SQLite 后台任务。用户可以
+导入个人 TXT、Markdown、PDF 或单个网页；Agent 会检索相关 Chunk，并在讲解和练习中
+展示可核验的页码或章节引用。
 
 ## 当前能力
 
@@ -30,6 +30,8 @@ Markdown、PDF 或单个网页；Agent 会检索相关 Chunk，并在讲解和�
 - TXT、Markdown、PDF、HTML 解析以及保留页码/章节的重叠分块。
 - SQLite FTS5 BM25、NumPy 余弦相似度和 Reciprocal Rank Fusion 混合检索。
 - 默认离线 Embedding，以及可选的 OpenAI-compatible `/embeddings` Provider。
+- SQLite 持久化任务、原子领取、租约心跳、崩溃恢复、幂等、取消和指数退避。
+- 独立 Worker 执行资料解析与 Embedding、周报聚合和到期复习快照生成。
 - 创建目标、获取计划、开始学习、提交答案、完成学习和查询复习的 REST API。
 - 创建目标、学习计划、个人资料库、学习会话和作答结果页面。
 - 请求幂等、事务回滚、领域测试、API 契约测试和前端 API 测试。
@@ -85,6 +87,8 @@ LEARNLOOP_LLM_PROVIDER=none
 LEARNLOOP_CHECKPOINT_RETENTION_DAYS=30
 LEARNLOOP_EMBEDDING_PROVIDER=local
 LEARNLOOP_EMBEDDING_DIMENSIONS=384
+LEARNLOOP_WORKER_LEASE_SECONDS=60
+LEARNLOOP_JOB_MAX_ATTEMPTS=3
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000/api/v1
 ```
 
@@ -151,16 +155,16 @@ uv run --project backend python scripts/migrate.py upgrade
 
 ### 3. 启动前后端
 
-使用统一脚本同时启动 FastAPI 和 Next.js：
+使用统一脚本同时启动 FastAPI、SQLite Worker 和 Next.js：
 
 ```bash
 uv run --project backend python scripts/dev.py
 ```
 
-也可以只启动其中一个服务：
+也可以只启动后端服务组或前端；后端服务组包含 API 和 Worker：
 
 ```bash
-# 只启动后端
+# 只启动 API 和 Worker
 uv run --project backend python scripts/dev.py --backend-only
 
 # 只启动前端
@@ -169,10 +173,16 @@ uv run --project backend python scripts/dev.py --frontend-only
 
 按 `Ctrl+C` 可以停止由脚本启动的服务。
 
+如果只需要执行一个排队任务，可运行：
+
+```bash
+uv run --project backend python scripts/run_worker.py --once
+```
+
 ## 方式二：不使用 uv 运行
 
 这种方式使用标准 `venv` 和 `pip` 管理后端环境。因为 `scripts/dev.py` 内部会调用
-uv，所以此方式需要在两个终端中分别启动后端和前端。
+uv，所以此方式需要在三个终端中分别启动 API、Worker 和前端。
 
 ### 1. 创建并激活 Python 虚拟环境
 
@@ -232,9 +242,20 @@ cd backend
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-### 6. 启动前端
+### 6. 启动后台 Worker
 
-在第二个终端中执行：
+在第二个终端中激活虚拟环境，然后执行：
+
+```bash
+python scripts/run_worker.py
+```
+
+Worker 必须保持运行，才能处理资料解析、Embedding 和维护任务。未运行时任务不会丢失，
+而是保留在 SQLite 的 `queued` 状态。
+
+### 7. 启动前端
+
+在第三个终端中执行：
 
 ```bash
 cd frontend
@@ -269,6 +290,7 @@ DeepSeek 模型生成；未配置模型时使用确定性模板：
 创建学习目标
 → 生成结构化学习计划
 → 在计划页导入个人资料并测试检索
+→ SQLite Worker 在后台解析、切块并建立索引
 → 选择计划项并开始学习
 → Agent 检索个人资料，生成带引用讲解并在练习处暂停
 → 提交答案并确认或纠正评分
@@ -378,3 +400,4 @@ PowerShell 禁止执行激活脚本，需要根据本机安全策略允许当前
 - [LangGraph 核心工作流](docs/architecture/langgraph-workflows.md)
 - [Checkpoint、Interrupt 与 SSE](docs/architecture/checkpoint-interrupt-sse.md)
 - [本地文件与 RAG](docs/architecture/local-rag.md)
+- [SQLite 后台任务](docs/architecture/background-jobs.md)

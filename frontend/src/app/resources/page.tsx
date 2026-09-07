@@ -5,12 +5,17 @@ import { useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useState } from "react";
 
 import {
+  cancelJob,
   deleteResource,
+  fetchJob,
+  fetchJobs,
   fetchResources,
   fetchStudyPlan,
   importResourceUrl,
+  retryJob,
   searchResources,
   uploadResource,
+  type BackgroundJob,
   type LearningResource,
   type PlanItem,
   type ResourceCitation,
@@ -30,6 +35,7 @@ function ResourceWorkspace() {
   const [planItems, setPlanItems] = useState<PlanItem[]>([]);
   const [nodeId, setNodeId] = useState("");
   const [resources, setResources] = useState<LearningResource[]>([]);
+  const [jobs, setJobs] = useState<Record<string, BackgroundJob>>({});
   const [citations, setCitations] = useState<ResourceCitation[]>([]);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,8 +55,41 @@ function ResourceWorkspace() {
 
   useEffect(() => {
     if (!goalId) return;
-    void refreshResources(goalId, setResources, setError);
+    void refreshWorkspace(goalId, setResources, setJobs, setError);
   }, [goalId]);
+
+  const activeJobIds = Object.values(jobs)
+    .filter((job) => job.status === "queued" || job.status === "running")
+    .map((job) => job.id)
+    .sort()
+    .join(",");
+
+  useEffect(() => {
+    if (!activeJobIds) return;
+    let disposed = false;
+    async function poll() {
+      try {
+        const latest = await Promise.all(
+          activeJobIds.split(",").map((jobId) => fetchJob(jobId)),
+        );
+        if (disposed) return;
+        setJobs((current) => mergeResourceJobs(current, latest));
+        if (latest.some((job) => isTerminal(job.status)) && goalId) {
+          setResources(await fetchResources(goalId));
+        }
+      } catch (caught) {
+        if (!disposed) {
+          setError(caught instanceof Error ? caught.message : "读取任务状态失败");
+        }
+      }
+    }
+    void poll();
+    const timer = window.setInterval(() => void poll(), 1_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [activeJobIds, goalId]);
 
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -60,8 +99,9 @@ function ResourceWorkspace() {
     const file = data.get("file");
     if (!(file instanceof File) || !file.size) return;
     await run(async () => {
-      await uploadResource(file, goalId, nodeId || undefined);
-      await refreshResources(goalId, setResources, setError);
+      const submission = await uploadResource(file, goalId, nodeId || undefined);
+      setJobs((current) => mergeResourceJobs(current, [submission.job]));
+      await refreshWorkspace(goalId, setResources, setJobs, setError);
       formElement.reset();
     });
   }
@@ -73,8 +113,9 @@ function ResourceWorkspace() {
     const data = new FormData(formElement);
     const url = String(data.get("url") ?? "");
     await run(async () => {
-      await importResourceUrl(url, goalId, nodeId || undefined);
-      await refreshResources(goalId, setResources, setError);
+      const submission = await importResourceUrl(url, goalId, nodeId || undefined);
+      setJobs((current) => mergeResourceJobs(current, [submission.job]));
+      await refreshWorkspace(goalId, setResources, setJobs, setError);
       formElement.reset();
     });
   }
@@ -94,10 +135,24 @@ function ResourceWorkspace() {
   async function remove(resourceId: string) {
     await run(async () => {
       await deleteResource(resourceId);
-      await refreshResources(goalId, setResources, setError);
+      await refreshWorkspace(goalId, setResources, setJobs, setError);
       setCitations((items) =>
         items.filter((item) => item.resource_id !== resourceId),
       );
+    });
+  }
+
+  async function cancel(jobId: string) {
+    await run(async () => {
+      const job = await cancelJob(jobId);
+      setJobs((current) => mergeResourceJobs(current, [job]));
+    });
+  }
+
+  async function retry(jobId: string) {
+    await run(async () => {
+      const job = await retryJob(jobId);
+      setJobs((current) => mergeResourceJobs(current, [job]));
     });
   }
 
@@ -162,7 +217,7 @@ function ResourceWorkspace() {
           </div>
           <input accept=".txt,.md,.markdown,.pdf" name="file" required type="file" />
           <button className="primary-button" disabled={!goalId || working}>
-            {working ? "正在解析与索引…" : "上传并建立索引"}
+            {working ? "正在提交…" : "上传并加入后台队列"}
           </button>
         </form>
 
@@ -173,7 +228,7 @@ function ResourceWorkspace() {
           </div>
           <input name="url" placeholder="https://example.com/lesson" required type="url" />
           <button className="primary-button" disabled={!goalId || working}>
-            {working ? "正在抓取与索引…" : "导入网页"}
+            {working ? "正在抓取…" : "抓取并加入后台队列"}
           </button>
         </form>
       </section>
@@ -201,25 +256,61 @@ function ResourceWorkspace() {
       <section className="resource-list">
         <h2>已导入资料</h2>
         {resources.length ? (
-          resources.map((resource) => (
-            <article className="resource-row" key={resource.id}>
-              <div>
-                <strong>{resource.title}</strong>
-                <p>
-                  {resource.source_type === "file" ? "本地文件" : "网页"} ·{" "}
-                  {(resource.size_bytes / 1024).toFixed(1)} KB · {resource.status}
-                </p>
-              </div>
-              <button
-                className="secondary-button"
-                disabled={working}
-                onClick={() => void remove(resource.id)}
-                type="button"
-              >
-                删除
-              </button>
-            </article>
-          ))
+          resources.map((resource) => {
+            const job = jobs[resource.id];
+            return (
+              <article className="resource-row" key={resource.id}>
+                <div>
+                  <strong>{resource.title}</strong>
+                  <p>
+                    {resource.source_type === "file" ? "本地文件" : "网页"} ·{" "}
+                    {(resource.size_bytes / 1024).toFixed(1)} KB ·{" "}
+                    {resourceStatus(resource.status)}
+                  </p>
+                  {job ? (
+                    <div className="resource-job">
+                      <progress max="100" value={job.progress} />
+                      <span>
+                        {job.progress_message ?? job.status} · 第 {job.attempts}/
+                        {job.max_attempts} 次尝试
+                      </span>
+                      {job.last_error ? <small>{job.last_error}</small> : null}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="resource-actions">
+                  {job && (job.status === "queued" || job.status === "running") ? (
+                    <button
+                      className="secondary-button"
+                      disabled={working}
+                      onClick={() => void cancel(job.id)}
+                      type="button"
+                    >
+                      取消任务
+                    </button>
+                  ) : null}
+                  {job && (job.status === "failed" || job.status === "cancelled") ? (
+                    <button
+                      className="secondary-button"
+                      disabled={working}
+                      onClick={() => void retry(job.id)}
+                      type="button"
+                    >
+                      重试
+                    </button>
+                  ) : null}
+                  <button
+                    className="secondary-button"
+                    disabled={working}
+                    onClick={() => void remove(resource.id)}
+                    type="button"
+                  >
+                    删除
+                  </button>
+                </div>
+              </article>
+            );
+          })
         ) : (
           <p className="loading-card">这个目标还没有个人资料。</p>
         )}
@@ -228,14 +319,50 @@ function ResourceWorkspace() {
   );
 }
 
-async function refreshResources(
+async function refreshWorkspace(
   goalId: string,
   update: (resources: LearningResource[]) => void,
+  updateJobs: (jobs: Record<string, BackgroundJob>) => void,
   fail: (message: string) => void,
 ) {
   try {
-    update(await fetchResources(goalId));
+    const [resources, recentJobs] = await Promise.all([
+      fetchResources(goalId),
+      fetchJobs("resource.process"),
+    ]);
+    update(resources);
+    const resourceIds = new Set(resources.map((resource) => resource.id));
+    updateJobs(
+      mergeResourceJobs(
+        {},
+        recentJobs.filter((job) =>
+          resourceIds.has(String(job.payload.resource_id ?? "")),
+        ),
+      ),
+    );
   } catch (caught) {
     fail(caught instanceof Error ? caught.message : "读取资料失败");
   }
+}
+
+function mergeResourceJobs(
+  current: Record<string, BackgroundJob>,
+  jobs: BackgroundJob[],
+): Record<string, BackgroundJob> {
+  const merged = { ...current };
+  for (const job of jobs) {
+    const resourceId = job.payload.resource_id;
+    if (typeof resourceId === "string") merged[resourceId] = job;
+  }
+  return merged;
+}
+
+function isTerminal(status: BackgroundJob["status"]): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function resourceStatus(status: LearningResource["status"]): string {
+  if (status === "ready") return "索引就绪";
+  if (status === "failed") return "处理失败";
+  return "后台处理中";
 }

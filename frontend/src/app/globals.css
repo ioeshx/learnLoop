@@ -424,6 +424,36 @@ button:disabled {
   line-height: 1.55;
 }
 
+.resource-job {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0.65rem;
+  max-width: 32rem;
+}
+
+.resource-job progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.resource-job span,
+.resource-job small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.resource-job small {
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
+.resource-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
 .citation-card span {
   margin-left: 0.6rem;
   color: var(--accent);
