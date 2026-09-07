@@ -54,6 +54,7 @@ export default function PlanPage() {
     <main className="page-shell narrow-shell">
       <nav className="page-nav">
         <Link href="/">← 新建目标</Link>
+        <Link href="/reviews">今日复习</Link>
         {plan ? (
           <Link href={`/resources?goalId=${plan.goal_id}&planId=${plan.id}`}>
             管理个人资料 →

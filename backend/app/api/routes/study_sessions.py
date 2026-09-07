@@ -7,12 +7,15 @@ from fastapi import APIRouter, Header, status
 from app.api.dependencies import ApplicationDependenciesDep
 from app.api.schemas import (
     AttemptResultResponse,
+    CorrectAttemptRequest,
     SessionResponse,
     StartSessionRequest,
     SubmitAttemptRequest,
 )
 from app.application import (
     CompleteStudySession,
+    CorrectAttemptCommand,
+    CorrectExerciseAttempt,
     GetStudySession,
     StartSessionCommand,
     StartStudySession,
@@ -73,6 +76,26 @@ async def submit_attempt(
             exercise_id=payload.exercise_id,
             selected_options=tuple(payload.selected_options),
             idempotency_key=idempotency_key,
+        )
+    )
+    return AttemptResultResponse.from_result(result)
+
+
+@router.patch(
+    "/{session_id}/attempts/{attempt_id}",
+    response_model=AttemptResultResponse,
+)
+async def correct_attempt(
+    session_id: str,
+    attempt_id: str,
+    payload: CorrectAttemptRequest,
+    dependencies: ApplicationDependenciesDep,
+) -> AttemptResultResponse:
+    result = await CorrectExerciseAttempt(dependencies).execute(
+        CorrectAttemptCommand(
+            session_id=session_id,
+            attempt_id=attempt_id,
+            selected_options=tuple(payload.selected_options),
         )
     )
     return AttemptResultResponse.from_result(result)

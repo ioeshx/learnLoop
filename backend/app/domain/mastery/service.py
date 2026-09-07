@@ -47,3 +47,11 @@ def apply_mastery_event(
         correct_count=correct_count,
         updated_at=event.occurred_at,
     )
+
+
+def project_mastery(events: list[MasteryEvent]) -> MasterySnapshot | None:
+    """Rebuild the current projection after an event was corrected."""
+    snapshot: MasterySnapshot | None = None
+    for event in sorted(events, key=lambda item: (item.occurred_at, item.id)):
+        snapshot = apply_mastery_event(snapshot, event)
+    return snapshot

@@ -73,6 +73,12 @@ a {
   letter-spacing: -0.03em;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
 .page-nav {
   color: var(--muted);
   font-size: 0.92rem;
@@ -361,6 +367,67 @@ button:disabled {
 .learning-stack {
   display: grid;
   gap: 1.4rem;
+}
+
+.adaptation-card {
+  margin-top: 1rem;
+  border: 1px solid rgba(36, 108, 80, 0.18);
+  border-radius: 1rem;
+  background: rgba(36, 108, 80, 0.07);
+  padding: 1rem;
+}
+
+.adaptation-card p {
+  margin: 0.4rem 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.review-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.review-card,
+.review-empty {
+  border: 1px solid var(--border);
+  border-radius: 1.25rem;
+  background: var(--surface);
+  padding: 1.25rem;
+}
+
+.review-card {
+  display: grid;
+  grid-template-columns: 2.5rem 1fr;
+  gap: 1rem;
+}
+
+.review-card h2,
+.review-empty h2 {
+  margin: 0.6rem 0;
+}
+
+.review-card p,
+.review-empty p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.review-rank {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  font-weight: 800;
+}
+
+.review-actions {
+  display: flex;
+  gap: 0.7rem;
+  margin-top: 1rem;
 }
 
 .resource-goal-field {

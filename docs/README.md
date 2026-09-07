@@ -6,6 +6,7 @@
 - `architecture/checkpoint-interrupt-sse.md`：阶段六的持久化执行、人机协作与事件流协议。
 - `architecture/local-rag.md`：阶段七的本地存储、资料解析、混合检索和引用规则。
 - `architecture/background-jobs.md`：阶段八的 SQLite 队列、租约、重试和 Worker。
+- `architecture/adaptive-review.md`：阶段九的掌握度投影、自适应难度、FSRS 队列和补救路径。
 - `architecture/`：系统、Agent、数据和运行时架构。
 - `adr/`：Architecture Decision Records。
 - `api/`：HTTP、SSE 和内部接口约定。

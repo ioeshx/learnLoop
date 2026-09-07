@@ -148,6 +148,10 @@ class StudySessionModel(Base):
         ForeignKey("plan_items.id", ondelete="SET NULL"), nullable=True
     )
     status: Mapped[str] = mapped_column(String(30))
+    kind: Mapped[str] = mapped_column(String(30), default="learning")
+    exercise_id: Mapped[str | None] = mapped_column(
+        ForeignKey("exercises.id", ondelete="SET NULL"), nullable=True
+    )
     started_at: Mapped[datetime] = mapped_column(UTCDateTime())
     completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 

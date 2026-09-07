@@ -17,6 +17,7 @@ from app.infrastructure.llm.models import (
     TokenUsageTracker,
     UsageSnapshot,
 )
+from app.infrastructure.llm.review_exercises import LlmReviewExerciseGenerator
 from app.infrastructure.llm.structured import StructuredModel, StructuredResult
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "FakeModelProvider",
     "FakeOutput",
     "LlmCurriculumGenerator",
+    "LlmReviewExerciseGenerator",
     "ModelError",
     "ModelMessage",
     "ModelProvider",

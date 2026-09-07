@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  correctExerciseAttempt,
   createGoal,
+  deferReview,
   replayAgentEvents,
   startDailyAgentRun,
+  startReviewSession,
   startStudySession,
   submitExerciseAttempt,
 } from "@/lib/api";
@@ -113,6 +116,35 @@ describe("learning workflow API client", () => {
     await expect(
       startStudySession("missing", "item-1", "session-key"),
     ).rejects.toThrow("learning goal was not found");
+  });
+
+  it("calls adaptive review and correction endpoints", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            knowledge_node_id: "node-1",
+            due_at: "2026-02-11T08:30:00Z",
+            last_review_at: null,
+          }),
+          { status: 200 },
+        ),
+    );
+
+    await startReviewSession("node-1", "review-key");
+    await deferReview("node-1", 2);
+    await correctExerciseAttempt("session-1", "attempt-1", ["A"]);
+
+    expect(fetchMock.mock.calls[0][0]).toContain("/reviews/sessions");
+    expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({
+      "Idempotency-Key": "review-key",
+    });
+    expect(fetchMock.mock.calls[1][0]).toContain("/reviews/node-1/defer");
+    expect(fetchMock.mock.calls[1][1]?.body).toBe(JSON.stringify({ days: 2 }));
+    expect(fetchMock.mock.calls[2][0]).toContain(
+      "/study-sessions/session-1/attempts/attempt-1",
+    );
+    expect(fetchMock.mock.calls[2][1]?.method).toBe("PATCH");
   });
 
   it("parses Agent SSE events and sends a replay cursor", async () => {

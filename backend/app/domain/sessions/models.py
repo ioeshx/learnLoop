@@ -12,6 +12,11 @@ class StudySessionStatus(StrEnum):
     COMPLETED = "completed"
 
 
+class StudySessionKind(StrEnum):
+    LEARNING = "learning"
+    REVIEW = "review"
+
+
 @dataclass(frozen=True, slots=True)
 class StudySession:
     id: str
@@ -20,11 +25,15 @@ class StudySession:
     status: StudySessionStatus
     started_at: datetime
     completed_at: datetime | None = None
+    kind: StudySessionKind = StudySessionKind.LEARNING
+    exercise_id: str | None = None
 
     def __post_init__(self) -> None:
         require_text(self.id, "id")
         require_text(self.goal_id, "goal_id")
         require_text(self.plan_item_id, "plan_item_id")
+        if self.exercise_id is not None:
+            require_text(self.exercise_id, "exercise_id")
         require_aware_utc(self.started_at, "started_at")
         if self.completed_at is not None:
             require_aware_utc(self.completed_at, "completed_at")
@@ -41,6 +50,8 @@ class StudySession:
         plan_item_id: str,
         session_id: str | None = None,
         now: datetime | None = None,
+        kind: StudySessionKind = StudySessionKind.LEARNING,
+        exercise_id: str | None = None,
     ) -> "StudySession":
         return cls(
             id=session_id or new_id(),
@@ -48,6 +59,8 @@ class StudySession:
             plan_item_id=plan_item_id,
             status=StudySessionStatus.ACTIVE,
             started_at=require_aware_utc(now or utc_now(), "now"),
+            kind=kind,
+            exercise_id=exercise_id,
         )
 
     def complete(self, *, now: datetime | None = None) -> "StudySession":

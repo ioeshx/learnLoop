@@ -159,6 +159,7 @@ async def test_daily_graph_adds_only_retrieved_source_citations() -> None:
 @pytest.mark.asyncio
 async def test_daily_graph_bounds_remediation_to_two_retries() -> None:
     factory, context, session_id, _, wrong_answer = await _learning_run()
+    original_exercise_id = factory.state.sessions[session_id].exercise_id
     graph = build_daily_learning_graph()
     state: StudySessionState = {
         "run_id": "daily-run-wrong",
@@ -173,6 +174,7 @@ async def test_daily_graph_bounds_remediation_to_two_retries() -> None:
     assert first["learning_outcome"] == "partially_mastered"
     assert first["remediation_count"] == 1
     assert first["selected_options"] == []
+    assert first["exercise_id"] != original_exercise_id
     assert "generate_supplemental" in first["events"]
 
     second = cast(
@@ -184,6 +186,7 @@ async def test_daily_graph_bounds_remediation_to_two_retries() -> None:
     assert second["status"] == "awaiting_answer"
     assert second["learning_outcome"] == "not_mastered"
     assert second["remediation_count"] == 2
+    assert second["exercise_id"] != first["exercise_id"]
     assert "generate_prerequisite_remediation" in second["events"]
 
     completed = cast(
@@ -197,6 +200,10 @@ async def test_daily_graph_bounds_remediation_to_two_retries() -> None:
     assert completed["remediation_count"] == 2
     assert completed["attempt_number"] == 3
     assert len(factory.state.attempts) == 3
+    exercise_ids = {
+        attempt.exercise_id for attempt in factory.state.attempts.values()
+    }
+    assert len(exercise_ids) == 3
 
 
 @pytest.mark.asyncio

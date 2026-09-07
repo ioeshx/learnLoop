@@ -5,6 +5,7 @@ from datetime import date
 
 from app.domain.exercises.models import Exercise, ExerciseAttempt
 from app.domain.knowledge.models import KnowledgeNode
+from app.domain.mastery import AdaptiveRecommendation
 from app.domain.mastery.models import MasterySnapshot
 from app.domain.plans.models import PlanItem, StudyPlan
 from app.domain.review.models import ReviewSchedule
@@ -29,11 +30,24 @@ class StartSessionCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class StartReviewSessionCommand:
+    knowledge_node_id: str
+    idempotency_key: str
+
+
+@dataclass(frozen=True, slots=True)
 class SubmitAttemptCommand:
     session_id: str
     exercise_id: str
     selected_options: tuple[str, ...]
     idempotency_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class CorrectAttemptCommand:
+    session_id: str
+    attempt_id: str
+    selected_options: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +121,7 @@ class SessionDetails:
     knowledge_node: KnowledgeNode
     exercise: Exercise
     latest_result: AttemptResult | None
+    adaptation: AdaptiveRecommendation
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,3 +129,6 @@ class DueReview:
     schedule: ReviewSchedule
     knowledge_node: KnowledgeNode
     exercise: Exercise | None
+    priority_score: float
+    overdue_days: int
+    reason: str

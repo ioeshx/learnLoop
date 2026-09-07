@@ -101,13 +101,20 @@ export default function ResultPage() {
                 onClick={complete}
                 type="button"
               >
-                {completing ? "正在保存…" : "完成本阶段"}
+                {completing
+                  ? "正在保存…"
+                  : session.kind === "review"
+                    ? "完成本次复习"
+                    : "完成本阶段"}
               </button>
             ) : (
               <span className="completion-note">本阶段已完成并保存</span>
             )}
-            <Link className="text-link" href={`/plans/${session.plan_id}`}>
-              返回学习计划 →
+            <Link
+              className="text-link"
+              href={session.kind === "review" ? "/reviews" : `/plans/${session.plan_id}`}
+            >
+              {session.kind === "review" ? "返回复习队列" : "返回学习计划"} →
             </Link>
           </div>
         </section>

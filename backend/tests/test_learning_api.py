@@ -1,6 +1,6 @@
 """HTTP contract test for the deterministic learning loop."""
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -164,3 +164,96 @@ async def test_invalid_generated_curriculum_returns_stable_api_error(
     }
     assert factory.state.plans == {}
     assert factory.state.nodes == {}
+
+
+@pytest.mark.asyncio
+async def test_adaptive_review_api_starts_corrects_and_defers_review(
+    test_settings: Settings,
+) -> None:
+    clock = [datetime(2026, 4, 1, 9, tzinfo=UTC)]
+    factory = FakeUnitOfWorkFactory()
+    application = create_app(test_settings)
+    application.state.application_dependencies = ApplicationDependencies(
+        uow_factory=factory,
+        review_scheduler=FsrsReviewScheduler(),
+        clock=lambda: clock[0],
+    )
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        goal = (
+            await client.post(
+                "/api/v1/goals",
+                headers={"Idempotency-Key": "review-api-goal"},
+                json={
+                    "title": "图算法",
+                    "desired_outcome": "独立实现 BFS",
+                    "weekly_minutes": 180,
+                },
+            )
+        ).json()
+        plan = (await client.post(f"/api/v1/goals/{goal['id']}/plans")).json()
+        learning = (
+            await client.post(
+                "/api/v1/study-sessions",
+                headers={"Idempotency-Key": "review-api-learning"},
+                json={
+                    "goal_id": goal["id"],
+                    "plan_item_id": plan["items"][0]["id"],
+                },
+            )
+        ).json()
+        attempt = (
+            await client.post(
+                f"/api/v1/study-sessions/{learning['id']}/attempts",
+                headers={"Idempotency-Key": "review-api-first-attempt"},
+                json={
+                    "exercise_id": learning["exercise"]["id"],
+                    "selected_options": [learning["exercise"]["options"][0]],
+                },
+            )
+        ).json()
+        await client.post(f"/api/v1/study-sessions/{learning['id']}/complete")
+        clock[0] = datetime.fromisoformat(attempt["due_at"]) + timedelta(minutes=1)
+
+        due_response = await client.get("/api/v1/reviews/due")
+        assert due_response.status_code == 200
+        due = due_response.json()[0]
+        assert due["priority_score"] > 0
+        assert due["reason"]
+
+        review_response = await client.post(
+            "/api/v1/reviews/sessions",
+            headers={"Idempotency-Key": "review-api-session"},
+            json={"knowledge_node_id": due["knowledge_node_id"]},
+        )
+        assert review_response.status_code == 201
+        review = review_response.json()
+        assert review["kind"] == "review"
+        assert review["adaptation"]["reasons"]
+
+        review_attempt = (
+            await client.post(
+                f"/api/v1/study-sessions/{review['id']}/attempts",
+                headers={"Idempotency-Key": "review-api-attempt"},
+                json={
+                    "exercise_id": review["exercise"]["id"],
+                    "selected_options": [review["exercise"]["options"][1]],
+                },
+            )
+        ).json()
+        corrected = await client.patch(
+            f"/api/v1/study-sessions/{review['id']}/attempts/"
+            f"{review_attempt['attempt_id']}",
+            json={"selected_options": [review["exercise"]["options"][0]]},
+        )
+        assert corrected.status_code == 200
+        assert corrected.json()["is_correct"] is True
+
+        deferred = await client.post(
+            f"/api/v1/reviews/{due['knowledge_node_id']}/defer",
+            json={"days": 2},
+        )
+        assert deferred.status_code == 200
+        assert datetime.fromisoformat(deferred.json()["due_at"]) == (
+            clock[0] + timedelta(days=2)
+        )

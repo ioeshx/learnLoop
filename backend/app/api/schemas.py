@@ -8,7 +8,9 @@ from pydantic.types import JsonValue
 from app.agent.execution import AgentEvent, AgentRun
 from app.application.models import AttemptResult, DueReview, PlanDetails, SessionDetails
 from app.domain.goals import LearningGoal
+from app.domain.mastery import AdaptiveRecommendation
 from app.domain.resources import LearningResource, ResourceCitation
+from app.domain.review import ReviewSchedule
 from app.workers import BackgroundJob
 
 
@@ -136,12 +138,14 @@ class SessionResponse(BaseModel):
     plan_id: str
     plan_item_id: str
     status: str
+    kind: str
     started_at: datetime
     completed_at: datetime | None
     lesson_title: str
     lesson_content: str
     exercise: ExerciseResponse
     latest_result: AttemptResultResponse | None
+    adaptation: "AdaptiveRecommendationResponse"
 
     @classmethod
     def from_details(cls, details: SessionDetails) -> "SessionResponse":
@@ -152,6 +156,7 @@ class SessionResponse(BaseModel):
             plan_id=details.plan_id,
             plan_item_id=details.plan_item.id,
             status=details.session.status.value,
+            kind=details.session.kind.value,
             started_at=details.session.started_at,
             completed_at=details.session.completed_at,
             lesson_title=details.knowledge_node.title,
@@ -171,6 +176,7 @@ class SessionResponse(BaseModel):
                 if details.latest_result is not None
                 else None
             ),
+            adaptation=AdaptiveRecommendationResponse.from_domain(details.adaptation),
         )
 
 
@@ -179,12 +185,74 @@ class SubmitAttemptRequest(RequestModel):
     selected_options: list[str] = Field(min_length=1)
 
 
+class CorrectAttemptRequest(RequestModel):
+    selected_options: list[str] = Field(min_length=1)
+
+
+class StartReviewSessionRequest(RequestModel):
+    knowledge_node_id: str = Field(min_length=1)
+
+
+class DeferReviewRequest(RequestModel):
+    days: int = Field(default=1, ge=1, le=7)
+
+
+class PrerequisiteGapResponse(BaseModel):
+    knowledge_node_id: str
+    title: str
+    score: float
+
+
+class AdaptiveRecommendationResponse(BaseModel):
+    mastery_score: float
+    base_difficulty: float
+    target_difficulty: float
+    prerequisite_gaps: list[PrerequisiteGapResponse]
+    reasons: list[str]
+
+    @classmethod
+    def from_domain(
+        cls, recommendation: AdaptiveRecommendation
+    ) -> "AdaptiveRecommendationResponse":
+        return cls(
+            mastery_score=recommendation.mastery_score,
+            base_difficulty=recommendation.base_difficulty,
+            target_difficulty=recommendation.target_difficulty,
+            prerequisite_gaps=[
+                PrerequisiteGapResponse(
+                    knowledge_node_id=gap.knowledge_node_id,
+                    title=gap.title,
+                    score=gap.score,
+                )
+                for gap in recommendation.prerequisite_gaps
+            ],
+            reasons=list(recommendation.reasons),
+        )
+
+
+class ReviewScheduleResponse(BaseModel):
+    knowledge_node_id: str
+    due_at: datetime
+    last_review_at: datetime | None
+
+    @classmethod
+    def from_domain(cls, schedule: ReviewSchedule) -> "ReviewScheduleResponse":
+        return cls(
+            knowledge_node_id=schedule.knowledge_node_id,
+            due_at=schedule.due_at,
+            last_review_at=schedule.last_review_at,
+        )
+
+
 class DueReviewResponse(BaseModel):
     knowledge_node_id: str
     knowledge_node_title: str
     due_at: datetime
     last_review_at: datetime | None
     exercise: ExerciseResponse | None
+    priority_score: float
+    overdue_days: int
+    reason: str
 
     @classmethod
     def from_domain(cls, due_review: DueReview) -> "DueReviewResponse":
@@ -194,6 +262,9 @@ class DueReviewResponse(BaseModel):
             knowledge_node_title=due_review.knowledge_node.title,
             due_at=due_review.schedule.due_at,
             last_review_at=due_review.schedule.last_review_at,
+            priority_score=due_review.priority_score,
+            overdue_days=due_review.overdue_days,
+            reason=due_review.reason,
             exercise=(
                 ExerciseResponse(
                     id=exercise.id,

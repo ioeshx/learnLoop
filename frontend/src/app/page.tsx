@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 import { BackendStatus } from "@/components/backend-status";
 import {
@@ -45,7 +46,12 @@ export default function Home() {
     <main className="page-shell">
       <header className="topbar">
         <div className="brand">LearnLoop</div>
-        <BackendStatus />
+        <div className="topbar-actions">
+          <Link className="text-link" href="/reviews">
+            今日复习
+          </Link>
+          <BackendStatus />
+        </div>
       </header>
 
       <section className="split-layout">

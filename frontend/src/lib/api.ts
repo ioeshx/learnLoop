@@ -62,12 +62,28 @@ export type StudySession = {
   plan_id: string;
   plan_item_id: string;
   status: string;
+  kind: "learning" | "review";
   started_at: string;
   completed_at: string | null;
   lesson_title: string;
   lesson_content: string;
   exercise: Exercise;
   latest_result: AttemptResult | null;
+  adaptation: AdaptiveRecommendation;
+};
+
+export type PrerequisiteGap = {
+  knowledge_node_id: string;
+  title: string;
+  score: number;
+};
+
+export type AdaptiveRecommendation = {
+  mastery_score: number;
+  base_difficulty: number;
+  target_difficulty: number;
+  prerequisite_gaps: PrerequisiteGap[];
+  reasons: string[];
 };
 
 export type DueReview = {
@@ -76,6 +92,15 @@ export type DueReview = {
   due_at: string;
   last_review_at: string | null;
   exercise: Exercise | null;
+  priority_score: number;
+  overdue_days: number;
+  reason: string;
+};
+
+export type ReviewSchedule = {
+  knowledge_node_id: string;
+  due_at: string;
+  last_review_at: string | null;
 };
 
 export type CreateGoalInput = {
@@ -295,6 +320,41 @@ export function fetchDueReviews(dueBefore?: string): Promise<DueReview[]> {
     ? `?due_before=${encodeURIComponent(dueBefore)}`
     : "";
   return apiRequest<DueReview[]>(`/reviews/due${query}`);
+}
+
+export function startReviewSession(
+  knowledgeNodeId: string,
+  idempotencyKey: string,
+): Promise<StudySession> {
+  return apiRequest<StudySession>("/reviews/sessions", {
+    method: "POST",
+    headers: postHeaders(idempotencyKey),
+    body: JSON.stringify({ knowledge_node_id: knowledgeNodeId }),
+  });
+}
+
+export function deferReview(
+  knowledgeNodeId: string,
+  days = 1,
+): Promise<ReviewSchedule> {
+  return apiRequest<ReviewSchedule>(`/reviews/${knowledgeNodeId}/defer`, {
+    method: "POST",
+    body: JSON.stringify({ days }),
+  });
+}
+
+export function correctExerciseAttempt(
+  sessionId: string,
+  attemptId: string,
+  selectedOptions: string[],
+): Promise<AttemptResult> {
+  return apiRequest<AttemptResult>(
+    `/study-sessions/${sessionId}/attempts/${attemptId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ selected_options: selectedOptions }),
+    },
+  );
 }
 
 export async function uploadResource(

@@ -4,9 +4,10 @@ LearnLoop 是一个本地优先、跨平台的自适应学习 Agent 项目。项
 Next.js 提供 Web 界面，FastAPI 提供后端 API，并使用 SQLite 在本地保存学习目标、
 知识点、学习计划、练习、掌握度和复习计划。
 
-目前已经完成开发路线中的阶段一至阶段八：工程基础、SQLite 领域模型、端到端学习
+目前已经完成开发路线中的阶段一至阶段九：工程基础、SQLite 领域模型、端到端学习
 闭环、可选的 LLM 结构化内容生成、LangGraph 核心工作流、可恢复的
-Checkpoint / Interrupt / SSE、本地文件与混合 RAG，以及 SQLite 后台任务。用户可以
+Checkpoint / Interrupt / SSE、本地文件与混合 RAG、SQLite 后台任务，以及可解释的
+自适应学习与 FSRS 复习。用户可以
 导入个人 TXT、Markdown、PDF 或单个网页；Agent 会检索相关 Chunk，并在讲解和练习中
 展示可核验的页码或章节引用。
 
@@ -17,6 +18,9 @@ Checkpoint / Interrupt / SSE、本地文件与混合 RAG，以及 SQLite 后台�
 - SQLite 异步访问、Alembic 迁移和 Unit of Work 事务边界。
 - 学习目标、知识图、学习计划、练习、掌握度和复习领域模型。
 - 知识依赖环检测、客观题确定性判分和 FSRS 复习调度。
+- 事件溯源式掌握度重算、规则化难度调整和真实前置知识缺口检测。
+- 按逾期、掌握度和难度排序的复习队列，以及独立复习会话和安全延期。
+- 配置模型时生成自适应复习题，离线或模型失败时自动回退规则题。
 - 无 LLM 的固定课程回退，以及完整的 Application Service 编排层。
 - 8 个 Pydantic 结构化输出契约和 7 个带版本的 Prompt。
 - 可替换的模型 Provider、Fake Provider 和 DeepSeek Provider。
@@ -32,8 +36,8 @@ Checkpoint / Interrupt / SSE、本地文件与混合 RAG，以及 SQLite 后台�
 - 默认离线 Embedding，以及可选的 OpenAI-compatible `/embeddings` Provider。
 - SQLite 持久化任务、原子领取、租约心跳、崩溃恢复、幂等、取消和指数退避。
 - 独立 Worker 执行资料解析与 Embedding、周报聚合和到期复习快照生成。
-- 创建目标、获取计划、开始学习、提交答案、完成学习和查询复习的 REST API。
-- 创建目标、学习计划、个人资料库、学习会话和作答结果页面。
+- 创建目标、获取计划、学习/复习会话、答案纠正、复习延期和自适应解释的 REST API。
+- 创建目标、学习计划、个人资料库、学习会话、作答结果和今日复习页面。
 - 请求幂等、事务回滚、领域测试、API 契约测试和前端 API 测试。
 
 ## 项目目录
@@ -401,3 +405,4 @@ PowerShell 禁止执行激活脚本，需要根据本机安全策略允许当前
 - [Checkpoint、Interrupt 与 SSE](docs/architecture/checkpoint-interrupt-sse.md)
 - [本地文件与 RAG](docs/architecture/local-rag.md)
 - [SQLite 后台任务](docs/architecture/background-jobs.md)
+- [自适应学习与复习](docs/architecture/adaptive-review.md)

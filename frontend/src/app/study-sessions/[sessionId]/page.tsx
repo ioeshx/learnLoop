@@ -208,8 +208,18 @@ export default function StudySessionPage() {
   return (
     <main className="page-shell narrow-shell">
       <nav className="page-nav">
-        <Link href={session ? `/plans/${session.plan_id}` : "/"}>← 返回计划</Link>
-        <span>Agent 学习会话</span>
+        <Link
+          href={
+            session?.kind === "review"
+              ? "/reviews"
+              : session
+                ? `/plans/${session.plan_id}`
+                : "/"
+          }
+        >
+          ← {session?.kind === "review" ? "返回复习队列" : "返回计划"}
+        </Link>
+        <span>{session?.kind === "review" ? "Agent 复习会话" : "Agent 学习会话"}</span>
       </nav>
 
       <AgentProgress
@@ -225,11 +235,28 @@ export default function StudySessionPage() {
       {session ? (
         <div className="learning-stack">
           <article className="lesson-card">
-            <p className="eyebrow">READ · UNDERSTAND</p>
+            <p className="eyebrow">
+              {session.kind === "review" ? "RECALL · REVIEW" : "READ · UNDERSTAND"}
+            </p>
             <h1 className="page-title">{session.lesson_title}</h1>
             <p className="lesson-copy">{session.lesson_content}</p>
             <aside className="learning-tip">
               Agent 会在作答和评分两个节点暂停；页面刷新后仍可从同一位置继续。
+            </aside>
+            <aside className="adaptation-card">
+              <strong>
+                自适应难度 {session.adaptation.base_difficulty.toFixed(1)} →{" "}
+                {session.adaptation.target_difficulty.toFixed(1)}
+              </strong>
+              <p>{session.adaptation.reasons.join("；")}</p>
+              {session.adaptation.prerequisite_gaps.length > 0 ? (
+                <p>
+                  前置缺口：
+                  {session.adaptation.prerequisite_gaps
+                    .map((gap) => `${gap.title} ${Math.round(gap.score * 100)}%`)
+                    .join("、")}
+                </p>
+              ) : null}
             </aside>
           </article>
 

@@ -43,11 +43,12 @@ async def load_context(
         "plan_item_id": cast(str, session["plan_item_id"]),
         "knowledge_node_id": node_id,
         "knowledge_node_title": cast(str, session["knowledge_node_title"]),
-        "knowledge_node_description": cast(
-            str, session["knowledge_node_description"]
-        ),
-        "knowledge_node_difficulty": cast(
-            float, session["knowledge_node_difficulty"]
+        "knowledge_node_description": cast(str, session["knowledge_node_description"]),
+        "knowledge_node_difficulty": cast(float, session["knowledge_node_difficulty"]),
+        "target_difficulty": cast(float, session["target_difficulty"]),
+        "adaptation_reasons": cast(list[str], session["adaptation_reasons"]),
+        "prerequisite_gaps": cast(
+            list[dict[str, object]], session["prerequisite_gaps"]
         ),
         "lesson_title": (
             state.get("lesson_title", cast(str, session["lesson_title"]))
@@ -103,9 +104,7 @@ async def generate_lesson(
         lesson_content = state.get("lesson_content", "")
         return {
             "lesson_content": (
-                f"{lesson_content.rstrip()}{appendix}"
-                if appendix
-                else lesson_content
+                f"{lesson_content.rstrip()}{appendix}" if appendix else lesson_content
             ),
             "events": ["generate_lesson"],
         }
@@ -113,21 +112,17 @@ async def generate_lesson(
     goal = await call_tool(
         runtime,
         "get_learning_goal",
-        runtime.context.tools.get_learning_goal(
-            _required_string(state, "goal_id")
-        ),
+        runtime.context.tools.get_learning_goal(_required_string(state, "goal_id")),
     )
     result = await runtime.context.model.generate(
         LESSON_PROMPT,
         {
             "goal": cast(str, goal["desired_outcome"]),
-            "knowledge_node_title": _required_string(
-                state, "knowledge_node_title"
-            ),
+            "knowledge_node_title": _required_string(state, "knowledge_node_title"),
             "knowledge_node_description": _required_string(
                 state, "knowledge_node_description"
             ),
-            "difficulty": state.get("knowledge_node_difficulty", 1.0),
+            "difficulty": state.get("target_difficulty", 1.0),
             "sources": _source_prompt_values(source_refs),
         },
         LessonContent,
@@ -145,9 +140,7 @@ async def generate_exercise(
     exercise = await call_tool(
         runtime,
         "create_exercise",
-        runtime.context.tools.create_exercise(
-            _required_string(state, "session_id")
-        ),
+        runtime.context.tools.create_exercise(_required_string(state, "session_id")),
     )
     return {
         "exercise_id": cast(str, exercise["exercise_id"]),
@@ -209,9 +202,7 @@ async def evaluate_answer(
     return {
         "evaluation": evaluation,
         "status": (
-            "awaiting_grade_review"
-            if runtime.context.review_grades
-            else "running"
+            "awaiting_grade_review" if runtime.context.review_grades else "running"
         ),
         "events": ["evaluate_answer"],
     }
@@ -359,9 +350,7 @@ async def diagnose_error(
         result = await runtime.context.model.generate(
             MISCONCEPTION_DIAGNOSIS_PROMPT,
             {
-                "knowledge_node": _required_string(
-                    state, "knowledge_node_title"
-                ),
+                "knowledge_node": _required_string(state, "knowledge_node_title"),
                 "question": _required_string(state, "exercise_prompt"),
                 "expected_answer": expected,
                 "learner_answer": state.get("selected_options", []),
@@ -377,9 +366,7 @@ async def route_after_review(
 ) -> Literal["complete", "remediate"]:
     outcome = state.get("learning_outcome")
     return (
-        "remediate"
-        if outcome in {"partially_mastered", "not_mastered"}
-        else "complete"
+        "remediate" if outcome in {"partially_mastered", "not_mastered"} else "complete"
     )
 
 
@@ -402,11 +389,18 @@ async def generate_supplemental(
         title_prefix="补充讲解",
         description_prefix="换一种方式解释，并针对刚才的错误给出一个新例子：",
     )
+    remediation_count = state.get("remediation_count", 0) + 1
+    exercise = await _create_remediation_exercise(
+        state, runtime, remediation_count=remediation_count
+    )
     return {
         "lesson_title": f"补充讲解：{_required_string(state, 'knowledge_node_title')}",
         "lesson_content": content,
+        "exercise_id": cast(str, exercise["exercise_id"]),
+        "exercise_prompt": cast(str, exercise["prompt"]),
+        "exercise_options": cast(list[str], exercise["options"]),
         "selected_options": [],
-        "remediation_count": state.get("remediation_count", 0) + 1,
+        "remediation_count": remediation_count,
         "status": "awaiting_answer",
         "events": ["generate_supplemental"],
     }
@@ -415,19 +409,37 @@ async def generate_supplemental(
 async def generate_prerequisite_remediation(
     state: StudySessionState, runtime: Runtime[DailyLearningContext]
 ) -> StudySessionState:
+    gaps = state.get("prerequisite_gaps", [])
+    gap_titles = [
+        str(gap["title"]) for gap in gaps if isinstance(gap.get("title"), str)
+    ]
+    gap_context = (
+        f"重点回顾：{'、'.join(gap_titles)}。"
+        if gap_titles
+        else "未发现明确的前置缺口，回到当前知识点的基础定义。"
+    )
     content = await _generate_remediation(
         state,
         runtime,
         title_prefix="前置知识补救",
-        description_prefix="先解释理解该知识点所需的前置概念，再回到原问题：",
+        description_prefix=(
+            f"先解释理解该知识点所需的前置概念，再回到原问题：{gap_context}"
+        ),
+    )
+    remediation_count = state.get("remediation_count", 0) + 1
+    exercise = await _create_remediation_exercise(
+        state, runtime, remediation_count=remediation_count
     )
     return {
         "lesson_title": (
             f"前置知识补救：{_required_string(state, 'knowledge_node_title')}"
         ),
         "lesson_content": content,
+        "exercise_id": cast(str, exercise["exercise_id"]),
+        "exercise_prompt": cast(str, exercise["prompt"]),
+        "exercise_options": cast(list[str], exercise["options"]),
         "selected_options": [],
-        "remediation_count": state.get("remediation_count", 0) + 1,
+        "remediation_count": remediation_count,
         "status": "awaiting_answer",
         "events": ["generate_prerequisite_remediation"],
     }
@@ -479,9 +491,7 @@ async def _generate_remediation(
     goal = await call_tool(
         runtime,
         "get_learning_goal",
-        runtime.context.tools.get_learning_goal(
-            _required_string(state, "goal_id")
-        ),
+        runtime.context.tools.get_learning_goal(_required_string(state, "goal_id")),
     )
     result = await runtime.context.model.generate(
         LESSON_PROMPT,
@@ -495,7 +505,7 @@ async def _generate_remediation(
                 f"{_required_string(state, 'knowledge_node_description')}"
                 f"{diagnosis_context}"
             ),
-            "difficulty": state.get("knowledge_node_difficulty", 1.0),
+            "difficulty": state.get("target_difficulty", 1.0),
             "sources": _source_prompt_values(state.get("source_refs", [])),
         },
         LessonContent,
@@ -503,13 +513,29 @@ async def _generate_remediation(
     return _render_lesson(result.value, state.get("source_refs", []))
 
 
+async def _create_remediation_exercise(
+    state: StudySessionState,
+    runtime: Runtime[DailyLearningContext],
+    *,
+    remediation_count: int,
+) -> dict[str, object]:
+    run_id = _required_string(state, "run_id")
+    return await call_tool(
+        runtime,
+        "create_remediation_exercise",
+        runtime.context.tools.create_remediation_exercise(
+            session_id=_required_string(state, "session_id"),
+            remediation_count=remediation_count,
+            idempotency_key=f"agent:{run_id}:remediation:{remediation_count}",
+        ),
+    )
+
+
 def _render_lesson(
     lesson: LessonContent, source_refs: list[dict[str, object]] | None = None
 ) -> str:
     examples = "\n".join(f"- {example}" for example in lesson.examples)
-    checkpoints = "\n".join(
-        f"- {checkpoint}" for checkpoint in lesson.checkpoints
-    )
+    checkpoints = "\n".join(f"- {checkpoint}" for checkpoint in lesson.checkpoints)
     return (
         f"{lesson.explanation}\n\n"
         f"示例\n{examples}\n\n"
@@ -573,8 +599,10 @@ def _resume_selected_options(response: object) -> list[str]:
         selected = response.get("selected_options")
     else:
         selected = response
-    if not isinstance(selected, list) or not selected or not all(
-        isinstance(option, str) and option.strip() for option in selected
+    if (
+        not isinstance(selected, list)
+        or not selected
+        or not all(isinstance(option, str) and option.strip() for option in selected)
     ):
         raise ValueError("resume value requires non-empty selected_options")
     return selected

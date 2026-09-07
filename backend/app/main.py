@@ -26,6 +26,7 @@ from app.infrastructure.embeddings import (
 from app.infrastructure.llm import (
     DeepSeekModelProvider,
     LlmCurriculumGenerator,
+    LlmReviewExerciseGenerator,
     ModelProvider,
     StructuredModel,
 )
@@ -120,6 +121,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 review_scheduler=FsrsReviewScheduler(),
                 curriculum_generator=curriculum_generator,
                 resource_search=rag_service,
+                review_exercise_generator=(
+                    LlmReviewExerciseGenerator(structured_model)
+                    if structured_model is not None
+                    else None
+                ),
             )
             lifespan_app.state.application_dependencies = application_dependencies
             async with open_agent_runtime(

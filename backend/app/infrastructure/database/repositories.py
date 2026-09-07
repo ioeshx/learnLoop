@@ -9,7 +9,7 @@ from app.domain.exercises.models import Exercise, ExerciseAttempt, ExerciseType
 from app.domain.goals.models import GoalStatus, LearningGoal
 from app.domain.knowledge.graph import validate_knowledge_graph
 from app.domain.knowledge.models import KnowledgeEdge, KnowledgeNode, RelationType
-from app.domain.mastery.models import MasteryEvent, MasterySnapshot
+from app.domain.mastery.models import MasteryEvent, MasteryEventType, MasterySnapshot
 from app.domain.plans.models import (
     PlanItem,
     PlanItemStatus,
@@ -17,7 +17,11 @@ from app.domain.plans.models import (
     StudyPlanStatus,
 )
 from app.domain.review.models import ReviewSchedule
-from app.domain.sessions.models import StudySession, StudySessionStatus
+from app.domain.sessions.models import (
+    StudySession,
+    StudySessionKind,
+    StudySessionStatus,
+)
 from app.domain.users.models import User
 from app.infrastructure.database.models import (
     ExerciseAttemptModel,
@@ -275,6 +279,14 @@ class SqlAlchemyExerciseRepository:
             )
         )
 
+    async def update_attempt(self, attempt: ExerciseAttempt) -> None:
+        model = await self._session.get(ExerciseAttemptModel, attempt.id)
+        if model is None:
+            raise LookupError(f"exercise attempt {attempt.id} was not found")
+        model.answer = list(attempt.answer)
+        model.score = attempt.score
+        model.is_correct = attempt.is_correct
+
     async def get_attempt(self, attempt_id: str) -> ExerciseAttempt | None:
         model = await self._session.get(ExerciseAttemptModel, attempt_id)
         return _attempt_from_model(model) if model is not None else None
@@ -316,6 +328,8 @@ class SqlAlchemyStudySessionRepository:
             raise LookupError(f"study session {study_session.id} was not found")
         model.status = study_session.status.value
         model.completed_at = study_session.completed_at
+        model.kind = study_session.kind.value
+        model.exercise_id = study_session.exercise_id
 
 
 class SqlAlchemyMasteryRepository:
@@ -335,6 +349,26 @@ class SqlAlchemyMasteryRepository:
                 occurred_at=event.occurred_at,
             )
         )
+
+    async def list_events(
+        self, user_id: str, knowledge_node_id: str
+    ) -> list[MasteryEvent]:
+        result = await self._session.scalars(
+            select(MasteryEventModel)
+            .where(
+                MasteryEventModel.user_id == user_id,
+                MasteryEventModel.knowledge_node_id == knowledge_node_id,
+            )
+            .order_by(MasteryEventModel.occurred_at, MasteryEventModel.id)
+        )
+        return [_mastery_event_from_model(model) for model in result]
+
+    async def update_event(self, event: MasteryEvent) -> None:
+        model = await self._session.get(MasteryEventModel, event.id)
+        if model is None:
+            raise LookupError(f"mastery event {event.id} was not found")
+        model.event_type = event.event_type.value
+        model.delta = event.delta
 
     async def get_snapshot(
         self, user_id: str, knowledge_node_id: str
@@ -488,6 +522,8 @@ def _study_session_to_model(study_session: StudySession) -> StudySessionModel:
         goal_id=study_session.goal_id,
         plan_item_id=study_session.plan_item_id,
         status=study_session.status.value,
+        kind=study_session.kind.value,
+        exercise_id=study_session.exercise_id,
         started_at=study_session.started_at,
         completed_at=study_session.completed_at,
     )
@@ -503,6 +539,8 @@ def _study_session_from_model(model: StudySessionModel) -> StudySession:
         status=StudySessionStatus(model.status),
         started_at=model.started_at,
         completed_at=model.completed_at,
+        kind=StudySessionKind(model.kind),
+        exercise_id=model.exercise_id,
     )
 
 
@@ -526,6 +564,18 @@ def _mastery_snapshot_from_model(model: MasterySnapshotModel) -> MasterySnapshot
         attempt_count=model.attempt_count,
         correct_count=model.correct_count,
         updated_at=model.updated_at,
+    )
+
+
+def _mastery_event_from_model(model: MasteryEventModel) -> MasteryEvent:
+    return MasteryEvent(
+        id=model.id,
+        user_id=model.user_id,
+        knowledge_node_id=model.knowledge_node_id,
+        attempt_id=model.attempt_id,
+        event_type=MasteryEventType(model.event_type),
+        delta=model.delta,
+        occurred_at=model.occurred_at,
     )
 
 

@@ -14,6 +14,9 @@ class StudySessionState(TypedDict, total=False):
     knowledge_node_title: str
     knowledge_node_description: str
     knowledge_node_difficulty: float
+    target_difficulty: float
+    adaptation_reasons: list[str]
+    prerequisite_gaps: list[dict[str, object]]
     exercise_id: str
     exercise_prompt: str
     exercise_options: list[str]

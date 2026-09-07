@@ -7,6 +7,8 @@ from app.agent.schemas import KnowledgeGraphProposal, StudyPlanProposal
 from app.application import (
     ApplicationDependencies,
     CompleteStudySession,
+    CreateRemediationExercise,
+    GetAdaptiveRecommendation,
     GetDueReviews,
     GetLearningGoal,
     GetMasteryState,
@@ -64,14 +66,20 @@ class LearningTools:
             "exercise_id": details.exercise.id,
             "exercise_prompt": details.exercise.prompt,
             "exercise_options": list(details.exercise.options),
+            "target_difficulty": details.adaptation.target_difficulty,
+            "adaptation_reasons": list(details.adaptation.reasons),
+            "prerequisite_gaps": [
+                {
+                    "knowledge_node_id": gap.knowledge_node_id,
+                    "title": gap.title,
+                    "score": gap.score,
+                }
+                for gap in details.adaptation.prerequisite_gaps
+            ],
         }
 
-    async def get_mastery_state(
-        self, knowledge_node_id: str
-    ) -> dict[str, object]:
-        snapshot = await GetMasteryState(self.dependencies).execute(
-            knowledge_node_id
-        )
+    async def get_mastery_state(self, knowledge_node_id: str) -> dict[str, object]:
+        snapshot = await GetMasteryState(self.dependencies).execute(knowledge_node_id)
         if snapshot is None:
             return {"score": 0.0, "attempt_count": 0, "correct_count": 0}
         return {
@@ -81,12 +89,31 @@ class LearningTools:
             "updated_at": snapshot.updated_at.isoformat(),
         }
 
+    async def get_adaptive_recommendation(
+        self, knowledge_node_id: str
+    ) -> dict[str, object]:
+        recommendation = await GetAdaptiveRecommendation(self.dependencies).execute(
+            knowledge_node_id
+        )
+        return {
+            "mastery_score": recommendation.mastery_score,
+            "base_difficulty": recommendation.base_difficulty,
+            "target_difficulty": recommendation.target_difficulty,
+            "reasons": list(recommendation.reasons),
+            "prerequisite_gaps": [
+                {
+                    "knowledge_node_id": gap.knowledge_node_id,
+                    "title": gap.title,
+                    "score": gap.score,
+                }
+                for gap in recommendation.prerequisite_gaps
+            ],
+        }
+
     async def get_due_reviews(
         self, *, due_before: datetime | None = None
     ) -> list[dict[str, object]]:
-        reviews = await GetDueReviews(self.dependencies).execute(
-            due_before=due_before
-        )
+        reviews = await GetDueReviews(self.dependencies).execute(due_before=due_before)
         return [
             {
                 "knowledge_node_id": review.knowledge_node.id,
@@ -159,8 +186,7 @@ class LearningTools:
         if plan_keys != node_keys or len(proposal.items) != len(graph.nodes):
             raise ValueError("study plan must contain every proposed node once")
         position = {
-            item.knowledge_node_key: index
-            for index, item in enumerate(proposal.items)
+            item.knowledge_node_key: index for index, item in enumerate(proposal.items)
         }
         for edge in graph.edges:
             if (
@@ -220,6 +246,25 @@ class LearningTools:
             "exercise_id": session["exercise_id"],
             "prompt": session["exercise_prompt"],
             "options": session["exercise_options"],
+        }
+
+    async def create_remediation_exercise(
+        self,
+        *,
+        session_id: str,
+        remediation_count: int,
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        details = await CreateRemediationExercise(self.dependencies).execute(
+            session_id,
+            remediation_count=remediation_count,
+            idempotency_key=idempotency_key,
+        )
+        return {
+            "exercise_id": details.exercise.id,
+            "prompt": details.exercise.prompt,
+            "options": list(details.exercise.options),
+            "target_difficulty": details.adaptation.target_difficulty,
         }
 
     async def grade_objective_answer(

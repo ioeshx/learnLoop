@@ -149,6 +149,11 @@ class FakeExerciseRepository:
     async def add_attempt(self, attempt: ExerciseAttempt) -> None:
         self._state.attempts[attempt.id] = attempt
 
+    async def update_attempt(self, attempt: ExerciseAttempt) -> None:
+        if attempt.id not in self._state.attempts:
+            raise LookupError(attempt.id)
+        self._state.attempts[attempt.id] = attempt
+
     async def get_attempt(self, attempt_id: str) -> ExerciseAttempt | None:
         return self._state.attempts.get(attempt_id)
 
@@ -196,6 +201,24 @@ class FakeMasteryRepository:
         self._state = state
 
     async def add_event(self, event: MasteryEvent) -> None:
+        self._state.mastery_events[event.id] = event
+
+    async def list_events(
+        self, user_id: str, knowledge_node_id: str
+    ) -> list[MasteryEvent]:
+        return sorted(
+            (
+                event
+                for event in self._state.mastery_events.values()
+                if event.user_id == user_id
+                and event.knowledge_node_id == knowledge_node_id
+            ),
+            key=lambda event: (event.occurred_at, event.id),
+        )
+
+    async def update_event(self, event: MasteryEvent) -> None:
+        if event.id not in self._state.mastery_events:
+            raise LookupError(event.id)
         self._state.mastery_events[event.id] = event
 
     async def get_snapshot(
