@@ -46,8 +46,13 @@ class GradeAnswerCommand:
 @dataclass(frozen=True, slots=True)
 class ResourceSnippet:
     resource_id: str
+    chunk_id: str
     title: str
     excerpt: str
+    score: float
+    page_number: int | None = None
+    section: str | None = None
+    source_uri: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

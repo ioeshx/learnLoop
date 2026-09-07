@@ -7,12 +7,16 @@ requires-python = ">=3.12,<3.14"
 dependencies = [
     "aiosqlite>=0.21",
     "alembic>=1.14",
+    "beautifulsoup4>=4.14",
     "fastapi>=0.115",
     "fsrs>=6.0",
     "httpx>=0.28",
     "langgraph>=1.0,<2.0",
     "langgraph-checkpoint-sqlite>=3.0,<4.0",
+    "numpy>=2.2",
     "pydantic-settings>=2.7",
+    "pypdf>=6.0",
+    "python-multipart>=0.0.20",
     "sqlalchemy>=2.0",
     "uvicorn[standard]>=0.34",
 ]

@@ -21,7 +21,7 @@ class StudySessionState(TypedDict, total=False):
     learner_answer: str
     evaluation_rubric: str
     reference_answer: str
-    source_refs: list[dict[str, str]]
+    source_refs: list[dict[str, object]]
     lesson_title: str
     lesson_content: str
     evaluation: dict[str, object]

@@ -20,6 +20,9 @@ EXPECTED_TABLES = {
     "mastery_events",
     "mastery_snapshots",
     "review_schedules",
+    "learning_resources",
+    "document_chunks",
+    "document_chunks_fts",
 }
 
 
@@ -47,6 +50,6 @@ def test_upgrade_creates_the_initial_schema(tmp_path: Path) -> None:
         busy_timeout = connection.execute("PRAGMA busy_timeout").fetchone()
 
     assert {row[0] for row in table_rows} >= EXPECTED_TABLES
-    assert version == ("0003_lesson_content",)
+    assert version == ("0004_learning_resources_rag",)
     assert journal_mode == ("wal",)
     assert busy_timeout == (5000,)

@@ -245,3 +245,58 @@ class ReviewScheduleModel(Base):
     last_review_at: Mapped[datetime | None] = mapped_column(
         UTCDateTime(), nullable=True
     )
+
+
+class LearningResourceModel(Base):
+    __tablename__ = "learning_resources"
+    __table_args__ = (
+        CheckConstraint("size_bytes > 0", name="resource_size_positive"),
+        Index("ix_learning_resources_goal_status", "goal_id", "status"),
+        Index("ix_learning_resources_node_status", "knowledge_node_id", "status"),
+        Index("ix_learning_resources_sha256", "sha256"),
+    )
+
+    id: Mapped[str] = mapped_column(String(UUID_LENGTH), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    goal_id: Mapped[str] = mapped_column(
+        ForeignKey("learning_goals.id", ondelete="CASCADE"), index=True
+    )
+    knowledge_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("knowledge_nodes.id", ondelete="SET NULL"), nullable=True
+    )
+    title: Mapped[str] = mapped_column(String(500))
+    source_type: Mapped[str] = mapped_column(String(20))
+    source_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    original_filename: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    media_type: Mapped[str] = mapped_column(String(200))
+    storage_key: Mapped[str] = mapped_column(String(200))
+    sha256: Mapped[str] = mapped_column(String(64))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(30))
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+
+class DocumentChunkModel(Base):
+    __tablename__ = "document_chunks"
+    __table_args__ = (
+        UniqueConstraint("resource_id", "position"),
+        CheckConstraint("position >= 0", name="chunk_position_non_negative"),
+        CheckConstraint("token_count > 0", name="chunk_token_count_positive"),
+        Index("ix_document_chunks_resource_position", "resource_id", "position"),
+    )
+
+    id: Mapped[str] = mapped_column(String(UUID_LENGTH), primary_key=True)
+    resource_id: Mapped[str] = mapped_column(
+        ForeignKey("learning_resources.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
+    token_count: Mapped[int] = mapped_column(Integer)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    section: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    embedding: Mapped[list[float]] = mapped_column(JSON)
+    embedding_model: Mapped[str] = mapped_column(String(200))

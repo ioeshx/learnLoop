@@ -44,6 +44,17 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=60.0, gt=0, le=600)
     llm_max_retries: int = Field(default=2, ge=0, le=5)
     checkpoint_retention_days: int = Field(default=30, ge=1, le=3650)
+    embedding_provider: Literal["local", "openai_compatible"] = "local"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_api_key: SecretStr | None = None
+    embedding_base_url: str = "https://api.openai.com/v1"
+    embedding_dimensions: int = Field(default=384, ge=32, le=4096)
+    resource_max_bytes: int = Field(
+        default=20 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024
+    )
+    resource_chunk_size: int = Field(default=1000, ge=100, le=8000)
+    resource_chunk_overlap: int = Field(default=150, ge=0, le=2000)
+    web_fetch_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
 
     @field_validator("api_prefix")
     @classmethod
@@ -82,12 +93,38 @@ class Settings(BaseSettings):
             raise ValueError("llm_base_url must be an HTTP(S) URL")
         return normalized
 
+    @field_validator("embedding_model")
+    @classmethod
+    def validate_embedding_model(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("embedding_model must not be empty")
+        return normalized
+
+    @field_validator("embedding_base_url")
+    @classmethod
+    def validate_embedding_base_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        if not normalized.startswith(("https://", "http://")):
+            raise ValueError("embedding_base_url must be an HTTP(S) URL")
+        return normalized
+
     @model_validator(mode="after")
     def validate_llm_credentials(self) -> "Settings":
         if self.llm_provider == "deepseek" and (
             self.llm_api_key is None or not self.llm_api_key.get_secret_value().strip()
         ):
             raise ValueError("llm_api_key is required when llm_provider is 'deepseek'")
+        if self.embedding_provider == "openai_compatible" and (
+            self.embedding_api_key is None
+            or not self.embedding_api_key.get_secret_value().strip()
+        ):
+            raise ValueError(
+                "embedding_api_key is required when embedding_provider is "
+                "'openai_compatible'"
+            )
+        if self.resource_chunk_overlap >= self.resource_chunk_size:
+            raise ValueError("resource_chunk_overlap must be less than chunk size")
         return self
 
     @property
@@ -105,6 +142,10 @@ class Settings(BaseSettings):
     @property
     def checkpoint_path(self) -> Path:
         return self.database_dir / "checkpoints.db"
+
+    @property
+    def document_storage_path(self) -> Path:
+        return self.data_dir / "files"
 
     def ensure_runtime_directories(self) -> None:
         """Create only the runtime directories required at application boot."""

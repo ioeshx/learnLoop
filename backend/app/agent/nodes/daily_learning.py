@@ -97,8 +97,18 @@ async def generate_lesson(
     # Preserve targeted remedial content when a caller resumes the explicit gate.
     if state.get("remediation_count", 0) > 0 and state.get("lesson_content"):
         return {"events": ["generate_lesson"]}
+    source_refs = state.get("source_refs", [])
     if runtime.context.model is None:
-        return {"events": ["generate_lesson"]}
+        appendix = _citation_appendix(source_refs)
+        lesson_content = state.get("lesson_content", "")
+        return {
+            "lesson_content": (
+                f"{lesson_content.rstrip()}{appendix}"
+                if appendix
+                else lesson_content
+            ),
+            "events": ["generate_lesson"],
+        }
 
     goal = await call_tool(
         runtime,
@@ -118,12 +128,13 @@ async def generate_lesson(
                 state, "knowledge_node_description"
             ),
             "difficulty": state.get("knowledge_node_difficulty", 1.0),
+            "sources": _source_prompt_values(source_refs),
         },
         LessonContent,
     )
     return {
         "lesson_title": result.value.title,
-        "lesson_content": _render_lesson(result.value),
+        "lesson_content": _render_lesson(result.value, source_refs),
         "events": ["generate_lesson"],
     }
 
@@ -140,7 +151,10 @@ async def generate_exercise(
     )
     return {
         "exercise_id": cast(str, exercise["exercise_id"]),
-        "exercise_prompt": cast(str, exercise["prompt"]),
+        "exercise_prompt": (
+            f"{cast(str, exercise['prompt'])}"
+            f"{_citation_appendix(state.get('source_refs', []), heading='支持资料')}"
+        ),
         "exercise_options": cast(list[str], exercise["options"]),
         "status": "awaiting_answer",
         "events": ["generate_exercise"],
@@ -456,11 +470,12 @@ async def _generate_remediation(
         else ""
     )
     if runtime.context.model is None:
-        return (
+        content = (
             f"{description_prefix}\n\n"
             f"{_required_string(state, 'knowledge_node_description')}"
             f"{diagnosis_context}"
         )
+        return f"{content}{_citation_appendix(state.get('source_refs', []))}"
     goal = await call_tool(
         runtime,
         "get_learning_goal",
@@ -481,13 +496,16 @@ async def _generate_remediation(
                 f"{diagnosis_context}"
             ),
             "difficulty": state.get("knowledge_node_difficulty", 1.0),
+            "sources": _source_prompt_values(state.get("source_refs", [])),
         },
         LessonContent,
     )
-    return _render_lesson(result.value)
+    return _render_lesson(result.value, state.get("source_refs", []))
 
 
-def _render_lesson(lesson: LessonContent) -> str:
+def _render_lesson(
+    lesson: LessonContent, source_refs: list[dict[str, object]] | None = None
+) -> str:
     examples = "\n".join(f"- {example}" for example in lesson.examples)
     checkpoints = "\n".join(
         f"- {checkpoint}" for checkpoint in lesson.checkpoints
@@ -497,7 +515,50 @@ def _render_lesson(lesson: LessonContent) -> str:
         f"示例\n{examples}\n\n"
         f"自检\n{checkpoints}\n\n"
         f"总结\n{lesson.summary}"
+        f"{_citation_appendix(source_refs or [])}"
     )
+
+
+def _source_prompt_values(
+    source_refs: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    values: list[dict[str, object]] = []
+    for source in source_refs[:5]:
+        excerpt = source.get("excerpt")
+        title = source.get("title")
+        if not isinstance(excerpt, str) or not isinstance(title, str):
+            continue
+        values.append(
+            {
+                "title": title,
+                "excerpt": excerpt[:1_500],
+                "page_number": source.get("page_number"),
+                "section": source.get("section"),
+            }
+        )
+    return values
+
+
+def _citation_appendix(
+    source_refs: list[dict[str, object]], *, heading: str = "参考资料"
+) -> str:
+    citations: list[str] = []
+    for index, source in enumerate(source_refs[:5], start=1):
+        title = source.get("title")
+        if not isinstance(title, str):
+            continue
+        page = source.get("page_number")
+        section = source.get("section")
+        if isinstance(page, int):
+            locator = f"第 {page} 页"
+        elif isinstance(section, str) and section:
+            locator = section
+        else:
+            locator = "全文"
+        citations.append(f"[{index}] {title} · {locator}")
+    if not citations:
+        return ""
+    return f"\n\n{heading}\n" + "\n".join(f"- {item}" for item in citations)
 
 
 def _required_string(state: StudySessionState, key: str) -> str:

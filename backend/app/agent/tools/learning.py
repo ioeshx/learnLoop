@@ -98,15 +98,20 @@ class LearningTools:
 
     async def search_learning_resources(
         self, knowledge_node_id: str
-    ) -> list[dict[str, str]]:
+    ) -> list[dict[str, object]]:
         resources = await SearchLearningResources(self.dependencies).execute(
             knowledge_node_id
         )
         return [
             {
                 "resource_id": resource.resource_id,
+                "chunk_id": resource.chunk_id,
                 "title": resource.title,
                 "excerpt": resource.excerpt,
+                "score": resource.score,
+                "page_number": resource.page_number,
+                "section": resource.section,
+                "source_uri": resource.source_uri,
             }
             for resource in resources
         ]

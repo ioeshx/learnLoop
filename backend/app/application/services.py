@@ -18,7 +18,7 @@ from app.application.models import (
     StartSessionCommand,
     SubmitAttemptCommand,
 )
-from app.application.ports import UnitOfWork, UnitOfWorkFactory
+from app.application.ports import ResourceSearch, UnitOfWork, UnitOfWorkFactory
 from app.application.templates import FixedCurriculumGenerator
 from app.domain.common import deterministic_id, utc_now
 from app.domain.exercises import (
@@ -55,6 +55,7 @@ class ApplicationDependencies:
     review_scheduler: ReviewScheduler
     clock: Callable[[], datetime] = utc_now
     curriculum_generator: CurriculumGenerator | None = None
+    resource_search: ResourceSearch | None = None
 
 
 async def _ensure_default_user(uow: UnitOfWork, now: datetime) -> User:
@@ -407,7 +408,7 @@ class GetMasteryState:
 
 
 class SearchLearningResources:
-    """Stage-seven seam; returns no external sources until RAG is implemented."""
+    """Retrieve grounded personal-resource citations for a knowledge node."""
 
     def __init__(self, dependencies: ApplicationDependencies) -> None:
         self._dependencies = dependencies
@@ -417,7 +418,24 @@ class SearchLearningResources:
             node = await uow.knowledge.get_node(knowledge_node_id)
             if node is None:
                 raise NotFoundError("knowledge node", knowledge_node_id)
-        return ()
+        if self._dependencies.resource_search is None:
+            return ()
+        citations = await self._dependencies.resource_search.search_for_knowledge_node(
+            knowledge_node_id
+        )
+        return tuple(
+            ResourceSnippet(
+                resource_id=citation.resource_id,
+                chunk_id=citation.chunk_id,
+                title=citation.title,
+                excerpt=citation.excerpt,
+                score=citation.score,
+                page_number=citation.page_number,
+                section=citation.section,
+                source_uri=citation.source_uri,
+            )
+            for citation in citations
+        )
 
 
 class GradeObjectiveAnswer:

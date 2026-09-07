@@ -8,6 +8,7 @@ from pydantic.types import JsonValue
 from app.agent.execution import AgentEvent, AgentRun
 from app.application.models import AttemptResult, DueReview, PlanDetails, SessionDetails
 from app.domain.goals import LearningGoal
+from app.domain.resources import LearningResource, ResourceCitation
 
 
 class RequestModel(BaseModel):
@@ -243,3 +244,72 @@ class AgentEventResponse(BaseModel):
 
 class ResumeAgentRunRequest(RequestModel):
     value: JsonValue
+
+
+class IngestUrlRequest(RequestModel):
+    url: str = Field(min_length=1, max_length=2_000)
+    goal_id: str = Field(min_length=1)
+    knowledge_node_id: str | None = None
+    title: str | None = Field(default=None, max_length=500)
+
+
+class ResourceResponse(BaseModel):
+    id: str
+    goal_id: str
+    knowledge_node_id: str | None
+    title: str
+    source_type: str
+    source_uri: str | None
+    original_filename: str | None
+    media_type: str
+    sha256: str
+    size_bytes: int
+    status: str
+    error: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_domain(cls, resource: LearningResource) -> "ResourceResponse":
+        return cls(
+            id=resource.id,
+            goal_id=resource.goal_id,
+            knowledge_node_id=resource.knowledge_node_id,
+            title=resource.title,
+            source_type=resource.source_type.value,
+            source_uri=resource.source_uri,
+            original_filename=resource.original_filename,
+            media_type=resource.media_type,
+            sha256=resource.sha256,
+            size_bytes=resource.size_bytes,
+            status=resource.status.value,
+            error=resource.error,
+            created_at=resource.created_at,
+            updated_at=resource.updated_at,
+        )
+
+
+class CitationResponse(BaseModel):
+    resource_id: str
+    chunk_id: str
+    title: str
+    excerpt: str
+    score: float
+    page_number: int | None
+    section: str | None
+    locator: str | None
+    source_uri: str | None
+
+    @classmethod
+    def from_domain(cls, citation: ResourceCitation) -> "CitationResponse":
+        return cls(
+            resource_id=citation.resource_id,
+            chunk_id=citation.chunk_id,
+            title=citation.title,
+            excerpt=citation.excerpt,
+            score=citation.score,
+            page_number=citation.page_number,
+            section=citation.section,
+            locator=citation.locator,
+            source_uri=citation.source_uri,
+        )

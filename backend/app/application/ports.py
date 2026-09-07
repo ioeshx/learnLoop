@@ -9,9 +9,16 @@ from app.domain.goals.repository import LearningGoalRepository
 from app.domain.knowledge.repository import KnowledgeRepository
 from app.domain.mastery.repository import MasteryRepository
 from app.domain.plans.repository import StudyPlanRepository
+from app.domain.resources import ResourceCitation
 from app.domain.review.repository import ReviewRepository
 from app.domain.sessions.repository import StudySessionRepository
 from app.domain.users.repository import UserRepository
+
+
+class ResourceSearch(Protocol):
+    async def search_for_knowledge_node(
+        self, knowledge_node_id: str, *, limit: int = 5
+    ) -> list[ResourceCitation]: ...
 
 
 class UnitOfWork(Protocol):

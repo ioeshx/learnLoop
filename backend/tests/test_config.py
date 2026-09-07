@@ -27,6 +27,7 @@ def test_database_path_is_derived_from_data_directory(tmp_path: Path) -> None:
     assert settings.checkpoint_path == (
         tmp_path / "runtime" / "db" / "checkpoints.db"
     )
+    assert settings.document_storage_path == tmp_path / "runtime" / "files"
 
 
 def test_deepseek_provider_requires_an_api_key() -> None:
@@ -38,3 +39,13 @@ def test_model_api_key_is_not_exposed_by_repr() -> None:
     settings = Settings(llm_provider="deepseek", llm_api_key="top-secret")
 
     assert "top-secret" not in repr(settings)
+
+
+def test_remote_embedding_provider_requires_api_key() -> None:
+    with pytest.raises(ValidationError, match="embedding_api_key is required"):
+        Settings(embedding_provider="openai_compatible", embedding_api_key="")
+
+
+def test_resource_chunk_overlap_must_be_smaller_than_chunk() -> None:
+    with pytest.raises(ValidationError, match="overlap must be less"):
+        Settings(resource_chunk_size=200, resource_chunk_overlap=200)

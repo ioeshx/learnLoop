@@ -1,5 +1,6 @@
 """End-to-end tests for the bounded LangGraph daily-learning workflow."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import cast
 
@@ -20,12 +21,32 @@ from app.application import (
     StartSessionCommand,
     StartStudySession,
 )
+from app.domain.resources import ResourceCitation
 from app.domain.sessions import StudySessionStatus
 from app.infrastructure.llm import FakeModelProvider, StructuredModel
 from app.infrastructure.review import FsrsReviewScheduler
 from tests.fakes import FakeUnitOfWorkFactory
 
 NOW = datetime(2026, 3, 1, 9, tzinfo=UTC)
+
+
+class StaticResourceSearch:
+    async def search_for_knowledge_node(
+        self, knowledge_node_id: str, *, limit: int = 5
+    ) -> list[ResourceCitation]:
+        del knowledge_node_id, limit
+        return [
+            ResourceCitation(
+                resource_id="resource-1",
+                chunk_id="chunk-1",
+                title="图算法手册",
+                excerpt="BFS 使用先进先出的队列。",
+                score=0.03,
+                page_number=7,
+                section="广度优先搜索",
+                source_uri=None,
+            )
+        ]
 
 
 async def _learning_run() -> tuple[
@@ -111,6 +132,28 @@ async def test_daily_graph_waits_then_completes_correct_answer() -> None:
         factory.state.sessions[session_id].status
         == StudySessionStatus.COMPLETED
     )
+
+
+@pytest.mark.asyncio
+async def test_daily_graph_adds_only_retrieved_source_citations() -> None:
+    _, base_context, session_id, _, _ = await _learning_run()
+    dependencies = replace(
+        base_context.tools.dependencies,
+        resource_search=StaticResourceSearch(),
+    )
+    context = DailyLearningContext(tools=LearningTools(dependencies))
+
+    result = cast(
+        StudySessionState,
+        await build_daily_learning_graph().ainvoke(
+            {"run_id": "rag-citation-run", "session_id": session_id},
+            context=context,
+        ),
+    )
+
+    assert result["source_refs"][0]["chunk_id"] == "chunk-1"
+    assert "[1] 图算法手册 · 第 7 页" in result["lesson_content"]
+    assert "[1] 图算法手册 · 第 7 页" in result["exercise_prompt"]
 
 
 @pytest.mark.asyncio

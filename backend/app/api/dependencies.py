@@ -6,6 +6,7 @@ from fastapi import Depends, Request
 
 from app.agent.execution import AgentRuntime
 from app.application.services import ApplicationDependencies
+from app.infrastructure.rag import RagService
 
 
 async def get_application_dependencies(request: Request) -> ApplicationDependencies:
@@ -22,3 +23,10 @@ async def get_agent_runtime(request: Request) -> AgentRuntime:
 
 
 AgentRuntimeDep = Annotated[AgentRuntime, Depends(get_agent_runtime)]
+
+
+async def get_rag_service(request: Request) -> RagService:
+    return cast(RagService, request.app.state.rag_service)
+
+
+RagServiceDep = Annotated[RagService, Depends(get_rag_service)]
