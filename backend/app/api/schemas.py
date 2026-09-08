@@ -6,7 +6,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.types import JsonValue
 
 from app.agent.execution import AgentEvent, AgentRun
-from app.application.models import AttemptResult, DueReview, PlanDetails, SessionDetails
+from app.agent.execution.models import ModelCallTrace, ToolCallTrace
+from app.application.models import (
+    AttemptResult,
+    DueReview,
+    LearningInsights,
+    PlanDetails,
+    SessionDetails,
+)
 from app.domain.goals import LearningGoal
 from app.domain.mastery import AdaptiveRecommendation
 from app.domain.resources import LearningResource, ResourceCitation
@@ -51,6 +58,83 @@ class GoalResponse(BaseModel):
             status=goal.status.value,
             created_at=goal.created_at,
             updated_at=goal.updated_at,
+        )
+
+
+class KnowledgeNodeInsightResponse(BaseModel):
+    id: str
+    title: str
+    difficulty: float
+    mastery_score: float
+    status: str
+
+
+class KnowledgeEdgeInsightResponse(BaseModel):
+    source_node_id: str
+    target_node_id: str
+    relation: str
+
+
+class MasteryTrendPointResponse(BaseModel):
+    knowledge_node_id: str
+    knowledge_node_title: str
+    score: float
+    event_type: str
+    occurred_at: datetime
+
+
+class WeeklyLearningSummaryResponse(BaseModel):
+    attempts: int
+    correct_attempts: int
+    completed_plan_items: int
+    average_mastery: float
+
+
+class LearningInsightsResponse(BaseModel):
+    goal_id: str
+    nodes: list[KnowledgeNodeInsightResponse]
+    edges: list[KnowledgeEdgeInsightResponse]
+    mastery_trend: list[MasteryTrendPointResponse]
+    weekly: WeeklyLearningSummaryResponse
+
+    @classmethod
+    def from_application(cls, insights: LearningInsights) -> "LearningInsightsResponse":
+        return cls(
+            goal_id=insights.goal_id,
+            nodes=[
+                KnowledgeNodeInsightResponse(
+                    id=node.id,
+                    title=node.title,
+                    difficulty=node.difficulty,
+                    mastery_score=node.mastery_score,
+                    status=node.status,
+                )
+                for node in insights.nodes
+            ],
+            edges=[
+                KnowledgeEdgeInsightResponse(
+                    source_node_id=edge.source_node_id,
+                    target_node_id=edge.target_node_id,
+                    relation=edge.relation,
+                )
+                for edge in insights.edges
+            ],
+            mastery_trend=[
+                MasteryTrendPointResponse(
+                    knowledge_node_id=point.knowledge_node_id,
+                    knowledge_node_title=point.knowledge_node_title,
+                    score=point.score,
+                    event_type=point.event_type,
+                    occurred_at=point.occurred_at,
+                )
+                for point in insights.mastery_trend
+            ],
+            weekly=WeeklyLearningSummaryResponse(
+                attempts=insights.weekly.attempts,
+                correct_attempts=insights.weekly.correct_attempts,
+                completed_plan_items=insights.weekly.completed_plan_items,
+                average_mastery=insights.weekly.average_mastery,
+            ),
         )
 
 
@@ -312,6 +396,74 @@ class AgentEventResponse(BaseModel):
     @classmethod
     def from_execution(cls, event: AgentEvent) -> "AgentEventResponse":
         return cls.model_validate(event.as_dict())
+
+
+class ToolCallTraceResponse(BaseModel):
+    call_id: str
+    tool_name: str
+    arguments: dict[str, object]
+    result_summary: dict[str, object] | None
+    status: str
+    duration_ms: float | None
+    error: str | None
+    started_at: datetime
+    completed_at: datetime | None
+
+    @classmethod
+    def from_execution(cls, call: ToolCallTrace) -> "ToolCallTraceResponse":
+        return cls(
+            call_id=call.call_id,
+            tool_name=call.tool_name,
+            arguments=call.arguments,
+            result_summary=call.result_summary,
+            status=call.status,
+            duration_ms=call.duration_ms,
+            error=call.error,
+            started_at=call.started_at,
+            completed_at=call.completed_at,
+        )
+
+
+class ModelCallTraceResponse(BaseModel):
+    call_id: str
+    prompt_name: str
+    prompt_version: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    duration_ms: float
+    attempts: int
+    repaired: bool
+    error: str | None
+    created_at: datetime
+
+    @classmethod
+    def from_execution(cls, call: ModelCallTrace) -> "ModelCallTraceResponse":
+        return cls(
+            call_id=call.call_id,
+            prompt_name=call.prompt_name,
+            prompt_version=call.prompt_version,
+            model=call.model,
+            input_tokens=call.input_tokens,
+            output_tokens=call.output_tokens,
+            total_tokens=call.total_tokens,
+            duration_ms=call.duration_ms,
+            attempts=call.attempts,
+            repaired=call.repaired,
+            error=call.error,
+            created_at=call.created_at,
+        )
+
+
+class AgentTraceResponse(BaseModel):
+    run: AgentRunResponse
+    events: list[AgentEventResponse]
+    tool_calls: list[ToolCallTraceResponse]
+    model_calls: list[ModelCallTraceResponse]
+    total_tokens: int
+    total_model_duration_ms: float
+    total_tool_duration_ms: float
 
 
 class ResumeAgentRunRequest(RequestModel):

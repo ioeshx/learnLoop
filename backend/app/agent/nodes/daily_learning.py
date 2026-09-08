@@ -28,12 +28,14 @@ async def load_context(
         runtime,
         "get_study_session",
         runtime.context.tools.get_study_session(session_id),
+        arguments={"session_id": session_id},
     )
     node_id = cast(str, session["knowledge_node_id"])
     mastery = await call_tool(
         runtime,
         "get_mastery_state",
         runtime.context.tools.get_mastery_state(node_id),
+        arguments={"knowledge_node_id": node_id},
     )
     return {
         "run_id": state.get("run_id", session_id),
@@ -88,6 +90,7 @@ async def retrieve_sources(
         runtime,
         "search_learning_resources",
         runtime.context.tools.search_learning_resources(node_id),
+        arguments={"knowledge_node_id": node_id},
     )
     return {"source_refs": sources, "events": ["retrieve_sources"]}
 
@@ -113,6 +116,7 @@ async def generate_lesson(
         runtime,
         "get_learning_goal",
         runtime.context.tools.get_learning_goal(_required_string(state, "goal_id")),
+        arguments={"goal_id": _required_string(state, "goal_id")},
     )
     result = await runtime.context.model.generate(
         LESSON_PROMPT,
@@ -141,6 +145,7 @@ async def generate_exercise(
         runtime,
         "create_exercise",
         runtime.context.tools.create_exercise(_required_string(state, "session_id")),
+        arguments={"session_id": _required_string(state, "session_id")},
     )
     return {
         "exercise_id": cast(str, exercise["exercise_id"]),
@@ -198,6 +203,11 @@ async def evaluate_answer(
             exercise_id=_required_string(state, "exercise_id"),
             selected_options=state.get("selected_options", []),
         ),
+        arguments={
+            "session_id": _required_string(state, "session_id"),
+            "exercise_id": _required_string(state, "exercise_id"),
+            "selected_option_count": len(state.get("selected_options", [])),
+        },
     )
     return {
         "evaluation": evaluation,
@@ -242,6 +252,11 @@ async def review_grade(
                 exercise_id=_required_string(state, "exercise_id"),
                 selected_options=selected_options,
             ),
+            arguments={
+                "session_id": _required_string(state, "session_id"),
+                "exercise_id": _required_string(state, "exercise_id"),
+                "selected_option_count": len(selected_options),
+            },
         )
         return {
             "selected_options": selected_options,
@@ -312,6 +327,11 @@ async def update_mastery(
                 f"agent:{_required_string(state, 'run_id')}:attempt:{attempt_number}"
             ),
         ),
+        arguments={
+            "session_id": _required_string(state, "session_id"),
+            "exercise_id": _required_string(state, "exercise_id"),
+            "attempt_number": attempt_number,
+        },
     )
     return {
         "evaluation": {**state.get("evaluation", {}), **update},
@@ -454,6 +474,7 @@ async def save_summary(
         runtime.context.tools.complete_study_session(
             _required_string(state, "session_id")
         ),
+        arguments={"session_id": _required_string(state, "session_id")},
     )
     outcome = state.get("learning_outcome", "remediation_exhausted")
     summary = (
@@ -492,6 +513,7 @@ async def _generate_remediation(
         runtime,
         "get_learning_goal",
         runtime.context.tools.get_learning_goal(_required_string(state, "goal_id")),
+        arguments={"goal_id": _required_string(state, "goal_id")},
     )
     result = await runtime.context.model.generate(
         LESSON_PROMPT,
@@ -528,6 +550,10 @@ async def _create_remediation_exercise(
             remediation_count=remediation_count,
             idempotency_key=f"agent:{run_id}:remediation:{remediation_count}",
         ),
+        arguments={
+            "session_id": _required_string(state, "session_id"),
+            "remediation_count": remediation_count,
+        },
     )
 
 

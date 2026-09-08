@@ -4,10 +4,10 @@ LearnLoop 是一个本地优先、跨平台的自适应学习 Agent 项目。项
 Next.js 提供 Web 界面，FastAPI 提供后端 API，并使用 SQLite 在本地保存学习目标、
 知识点、学习计划、练习、掌握度和复习计划。
 
-目前已经完成开发路线中的阶段一至阶段九：工程基础、SQLite 领域模型、端到端学习
+目前已经完成开发路线中的阶段一至阶段十：工程基础、SQLite 领域模型、端到端学习
 闭环、可选的 LLM 结构化内容生成、LangGraph 核心工作流、可恢复的
 Checkpoint / Interrupt / SSE、本地文件与混合 RAG、SQLite 后台任务，以及可解释的
-自适应学习与 FSRS 复习。用户可以
+自适应学习与 FSRS 复习，以及离线评测、Agent Trace、学习 Dashboard 和 PWA。用户可以
 导入个人 TXT、Markdown、PDF 或单个网页；Agent 会检索相关 Chunk，并在讲解和练习中
 展示可核验的页码或章节引用。
 
@@ -38,6 +38,10 @@ Checkpoint / Interrupt / SSE、本地文件与混合 RAG、SQLite 后台任务�
 - 独立 Worker 执行资料解析与 Embedding、周报聚合和到期复习快照生成。
 - 创建目标、获取计划、学习/复习会话、答案纠正、复习延期和自适应解释的 REST API。
 - 创建目标、学习计划、个人资料库、学习会话、作答结果和今日复习页面。
+- 学习 Dashboard、知识依赖、掌握度趋势、七日学习摘要和 Agent Trace 页面。
+- 版本化离线评测数据集，以及结构化输出、Tool、恢复、RAG、引用、评分和性能门禁。
+- HTTP/Agent 结构化观测、Prompt 版本、模型 Token/耗时和安全的 Tool 结果摘要。
+- PWA Manifest、应用壳缓存、浏览器安装提示和本地学习数据 JSON 备份。
 - 请求幂等、事务回滚、领域测试、API 契约测试和前端 API 测试。
 
 ## 项目目录
@@ -308,6 +312,9 @@ Client 会自动生成该请求头，避免网络重试造成重复数据。
 学习会话页面使用 SSE 展示当前节点和 Tool；连接中断时根据最后事件序号补拉，页面刷新
 则通过稳定的 Run/Thread 映射恢复到同一个 Interrupt。
 
+Dashboard 位于 <http://127.0.0.1:3000/dashboard>，可查看知识图、掌握度趋势、七日摘要、
+最近 Agent 运行并导出本地学习数据。支持 PWA 的浏览器会显示“安装 LearnLoop”入口。
+
 ## 数据库迁移命令
 
 使用 uv：
@@ -330,6 +337,18 @@ python scripts/migrate.py downgrade -1
 使用。
 
 ## 运行检查和测试
+
+阶段十的离线 Agent 质量门禁可单独运行：
+
+```bash
+# 使用 uv
+uv run --project backend python scripts/run_evals.py
+
+# 不使用 uv，先激活 backend/.venv
+python scripts/run_evals.py
+```
+
+评测报告生成在 `backend/evals/reports/latest.json`，任一指标低于阈值时命令返回非零状态。
 
 ### 使用 uv
 
@@ -406,3 +425,4 @@ PowerShell 禁止执行激活脚本，需要根据本机安全策略允许当前
 - [本地文件与 RAG](docs/architecture/local-rag.md)
 - [SQLite 后台任务](docs/architecture/background-jobs.md)
 - [自适应学习与复习](docs/architecture/adaptive-review.md)
+- [评测、可观测性与交付完善](docs/architecture/evaluation-observability.md)

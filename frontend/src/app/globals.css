@@ -79,6 +79,188 @@ a {
   gap: 1.25rem;
 }
 
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.text-button {
+  border: 0;
+  background: none;
+  color: var(--accent-dark);
+  cursor: pointer;
+  font-weight: 700;
+  padding: 0;
+}
+
+.dashboard-goal-select {
+  display: grid;
+  max-width: 28rem;
+  gap: 0.45rem;
+  margin-bottom: 1.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.metric-card,
+.dashboard-card {
+  border: 1px solid var(--border);
+  border-radius: 1.25rem;
+  background: var(--surface);
+  box-shadow: 0 1rem 3rem rgba(35, 48, 41, 0.06);
+}
+
+.metric-card {
+  display: grid;
+  gap: 0.45rem;
+  padding: 1.2rem;
+}
+
+.metric-card span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.metric-card strong {
+  font-size: 1.8rem;
+}
+
+.dashboard-grid,
+.trace-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.dashboard-card {
+  padding: 1.35rem;
+}
+
+.dashboard-card h2 {
+  margin: 0 0 1rem;
+}
+
+.knowledge-map,
+.trend-list,
+.trace-run-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.knowledge-node {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.45rem;
+}
+
+.knowledge-node div {
+  grid-column: 1 / -1;
+  height: 0.35rem;
+  overflow: hidden;
+  border-radius: 99rem;
+  background: rgba(99, 113, 106, 0.14);
+}
+
+.knowledge-node i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.knowledge-edge,
+.muted-copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.trend-list > div,
+.trace-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.25rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.65rem;
+}
+
+.trend-list small,
+.trace-row small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+
+.trace-list-card {
+  margin-top: 1rem;
+}
+
+.trace-run-list a {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 1rem;
+  border-bottom: 1px solid var(--border);
+  color: inherit;
+  padding: 0.65rem 0;
+  text-decoration: none;
+}
+
+.trace-run-list small {
+  color: var(--muted);
+}
+
+.compact-metrics {
+  margin-top: 2rem;
+}
+
+.trace-row {
+  margin-bottom: 0.75rem;
+}
+
+.model-row {
+  border-left: 0.2rem solid var(--accent);
+  padding-left: 0.65rem;
+}
+
+.install-app-button {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 20;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent-dark);
+  box-shadow: var(--shadow);
+  color: white;
+  cursor: pointer;
+  padding: 0.75rem 1rem;
+  font-weight: 750;
+}
+
+@media (max-width: 720px) {
+  .metric-grid,
+  .dashboard-grid,
+  .trace-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .trace-run-list a {
+    grid-template-columns: 1fr auto;
+  }
+
+  .trace-run-list small {
+    grid-column: 1 / -1;
+  }
+}
+
 .page-nav {
   color: var(--muted);
   font-size: 0.92rem;

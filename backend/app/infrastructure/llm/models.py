@@ -1,5 +1,6 @@
 """Provider-neutral model request, response, and usage contracts."""
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -71,6 +72,22 @@ class ModelResponse:
     model: str
     usage: TokenUsage
     request_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ModelCallObservation:
+    run_id: str | None
+    prompt_name: str
+    prompt_version: str
+    model: str
+    usage: TokenUsage
+    duration_ms: float
+    attempts: int
+    repaired: bool
+    error: str | None = None
+
+
+ModelCallObserver = Callable[[ModelCallObservation], Awaitable[None]]
 
 
 class ModelProvider(Protocol):

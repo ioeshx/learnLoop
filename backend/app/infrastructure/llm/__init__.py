@@ -9,6 +9,8 @@ from app.infrastructure.llm.errors import (
 )
 from app.infrastructure.llm.fake import FakeModelProvider, FakeOutput
 from app.infrastructure.llm.models import (
+    ModelCallObservation,
+    ModelCallObserver,
     ModelMessage,
     ModelProvider,
     ModelRequest,
@@ -27,6 +29,8 @@ __all__ = [
     "LlmCurriculumGenerator",
     "LlmReviewExerciseGenerator",
     "ModelError",
+    "ModelCallObservation",
+    "ModelCallObserver",
     "ModelMessage",
     "ModelProvider",
     "ModelProviderError",

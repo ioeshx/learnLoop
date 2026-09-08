@@ -126,7 +126,8 @@ export type AgentEventKind =
   | "tool_completed"
   | "interrupt_created"
   | "run_completed"
-  | "run_failed";
+  | "run_failed"
+  | "model_completed";
 
 export type AgentEvent = {
   run_id: string;
@@ -145,6 +146,72 @@ export type AgentRun = {
   status: AgentRunStatus;
   created_at: string;
   updated_at: string;
+};
+
+export type ToolCallTrace = {
+  call_id: string;
+  tool_name: string;
+  arguments: Record<string, unknown>;
+  result_summary: Record<string, unknown> | null;
+  status: string;
+  duration_ms: number | null;
+  error: string | null;
+  started_at: string;
+  completed_at: string | null;
+};
+
+export type ModelCallTrace = {
+  call_id: string;
+  prompt_name: string;
+  prompt_version: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  duration_ms: number;
+  attempts: number;
+  repaired: boolean;
+  error: string | null;
+  created_at: string;
+};
+
+export type AgentTrace = {
+  run: AgentRun;
+  events: AgentEvent[];
+  tool_calls: ToolCallTrace[];
+  model_calls: ModelCallTrace[];
+  total_tokens: number;
+  total_model_duration_ms: number;
+  total_tool_duration_ms: number;
+};
+
+export type LearningInsights = {
+  goal_id: string;
+  nodes: Array<{
+    id: string;
+    title: string;
+    difficulty: number;
+    mastery_score: number;
+    status: string;
+  }>;
+  edges: Array<{
+    source_node_id: string;
+    target_node_id: string;
+    relation: string;
+  }>;
+  mastery_trend: Array<{
+    knowledge_node_id: string;
+    knowledge_node_title: string;
+    score: number;
+    event_type: string;
+    occurred_at: string;
+  }>;
+  weekly: {
+    attempts: number;
+    correct_attempts: number;
+    completed_plan_items: number;
+    average_mastery: number;
+  };
 };
 
 export type AgentStreamResult = {
@@ -267,6 +334,14 @@ export function createGoal(
 
 export function fetchGoal(goalId: string): Promise<Goal> {
   return apiRequest<Goal>(`/goals/${goalId}`);
+}
+
+export function fetchGoals(): Promise<Goal[]> {
+  return apiRequest<Goal[]>("/goals");
+}
+
+export function fetchLearningInsights(goalId: string): Promise<LearningInsights> {
+  return apiRequest<LearningInsights>(`/goals/${goalId}/insights`);
 }
 
 export function createStudyPlan(goalId: string): Promise<StudyPlan> {
@@ -434,6 +509,27 @@ export async function deleteResource(resourceId: string): Promise<void> {
 
 export function fetchAgentRun(runId: string): Promise<AgentRun> {
   return apiRequest<AgentRun>(`/agent/runs/${runId}`);
+}
+
+export function fetchAgentRuns(): Promise<AgentRun[]> {
+  return apiRequest<AgentRun[]>("/agent/runs");
+}
+
+export function fetchAgentTrace(runId: string): Promise<AgentTrace> {
+  return apiRequest<AgentTrace>(`/agent/runs/${runId}/trace`);
+}
+
+export async function downloadLearningData(): Promise<void> {
+  const response = await checkedResponse(
+    await fetch(`${API_BASE_URL}/data/export`, { cache: "no-store" }),
+  );
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "learnloop-learning-data.json";
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 export function startDailyAgentRun(

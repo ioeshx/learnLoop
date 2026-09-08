@@ -3,6 +3,7 @@
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -10,11 +11,14 @@ from pydantic import BaseModel, ValidationError
 from app.agent.prompts import PromptTemplate
 from app.infrastructure.llm.errors import StructuredOutputError
 from app.infrastructure.llm.models import (
+    ModelCallObservation,
+    ModelCallObserver,
     ModelMessage,
     ModelProvider,
     ModelRequest,
     TokenUsage,
 )
+from app.observability import current_agent_run_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,8 +32,14 @@ class StructuredResult[OutputT: BaseModel]:
 
 
 class StructuredModel:
-    def __init__(self, provider: ModelProvider) -> None:
+    def __init__(
+        self, provider: ModelProvider, observer: ModelCallObserver | None = None
+    ) -> None:
         self.provider = provider
+        self._observer = observer
+
+    def set_observer(self, observer: ModelCallObserver | None) -> None:
+        self._observer = observer
 
     async def generate[OutputT: BaseModel](
         self,
@@ -38,6 +48,55 @@ class StructuredModel:
         output_type: type[OutputT],
         *,
         max_output_tokens: int = 4_096,
+    ) -> StructuredResult[OutputT]:
+        started = perf_counter()
+        try:
+            result = await self._generate_validated(
+                prompt, values, output_type, max_output_tokens=max_output_tokens
+            )
+        except Exception as error:
+            if self._observer is not None:
+                attempts = (
+                    error.attempts
+                    if isinstance(error, StructuredOutputError)
+                    else 1
+                )
+                await self._observer(
+                    ModelCallObservation(
+                        run_id=current_agent_run_id(),
+                        prompt_name=prompt.name,
+                        prompt_version=prompt.version,
+                        model=self.provider.name,
+                        usage=TokenUsage(),
+                        duration_ms=(perf_counter() - started) * 1000,
+                        attempts=attempts,
+                        repaired=False,
+                        error=f"{type(error).__name__}: {str(error)[:500]}",
+                    )
+                )
+            raise
+        if self._observer is not None:
+            await self._observer(
+                ModelCallObservation(
+                    run_id=current_agent_run_id(),
+                    prompt_name=result.prompt_name,
+                    prompt_version=result.prompt_version,
+                    model=result.model,
+                    usage=result.usage,
+                    duration_ms=(perf_counter() - started) * 1000,
+                    attempts=2 if result.repaired else 1,
+                    repaired=result.repaired,
+                )
+            )
+        return result
+
+    async def _generate_validated[OutputT: BaseModel](
+        self,
+        prompt: PromptTemplate,
+        values: BaseModel | Mapping[str, Any],
+        output_type: type[OutputT],
+        *,
+        max_output_tokens: int,
     ) -> StructuredResult[OutputT]:
         if prompt.output_schema is not output_type:
             raise ValueError("output_type must match the prompt output schema")

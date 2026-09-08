@@ -47,6 +47,9 @@ export default function Home() {
       <header className="topbar">
         <div className="brand">LearnLoop</div>
         <div className="topbar-actions">
+          <Link className="text-link" href="/dashboard">
+            仪表盘
+          </Link>
           <Link className="text-link" href="/reviews">
             今日复习
           </Link>

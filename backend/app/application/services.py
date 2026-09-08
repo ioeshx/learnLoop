@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from app.application.curriculum import CurriculumGenerator
 from app.application.errors import ConflictError, NotFoundError
@@ -12,6 +12,10 @@ from app.application.models import (
     CreateGoalCommand,
     DueReview,
     GradeAnswerCommand,
+    KnowledgeEdgeInsight,
+    KnowledgeNodeInsight,
+    LearningInsights,
+    MasteryTrendPoint,
     PersistPlanProposalCommand,
     PlanDetails,
     ResourceSnippet,
@@ -19,6 +23,7 @@ from app.application.models import (
     StartReviewSessionCommand,
     StartSessionCommand,
     SubmitAttemptCommand,
+    WeeklyLearningSummary,
 )
 from app.application.ports import ResourceSearch, UnitOfWork, UnitOfWorkFactory
 from app.application.review_exercises import (
@@ -223,6 +228,236 @@ class GetLearningGoal:
             if goal is None:
                 raise NotFoundError("learning goal", goal_id)
             return goal
+
+
+class ListLearningGoals:
+    def __init__(self, dependencies: ApplicationDependencies) -> None:
+        self._dependencies = dependencies
+
+    async def execute(self) -> list[LearningGoal]:
+        async with self._dependencies.uow_factory() as uow:
+            return await uow.goals.list_for_user(DEFAULT_USER_ID)
+
+
+class ExportLearningData:
+    """Create a portable JSON backup without exposing model prompts or secrets."""
+
+    def __init__(self, dependencies: ApplicationDependencies) -> None:
+        self._dependencies = dependencies
+
+    async def execute(self) -> dict[str, object]:
+        async with self._dependencies.uow_factory() as uow:
+            goals = await uow.goals.list_for_user(DEFAULT_USER_ID)
+            exported_goals: list[dict[str, object]] = []
+            for goal in goals:
+                nodes = await uow.knowledge.list_nodes(goal.id)
+                edges = await uow.knowledge.list_edges(goal.id)
+                plans = await uow.plans.list_for_goal(goal.id)
+                node_data: list[dict[str, object]] = []
+                for node in nodes:
+                    exercises = await uow.exercises.list_for_node(node.id)
+                    exercise_data: list[dict[str, object]] = []
+                    for exercise in exercises:
+                        attempts = await uow.exercises.list_attempts(exercise.id)
+                        exercise_data.append(
+                            {
+                                "id": exercise.id,
+                                "type": exercise.exercise_type.value,
+                                "prompt": exercise.prompt,
+                                "options": list(exercise.options),
+                                "answer_key": list(exercise.answer_key),
+                                "attempts": [
+                                    {
+                                        "id": attempt.id,
+                                        "answer": list(attempt.answer),
+                                        "score": attempt.score,
+                                        "is_correct": attempt.is_correct,
+                                        "attempted_at": (
+                                            attempt.attempted_at.isoformat()
+                                        ),
+                                    }
+                                    for attempt in attempts
+                                ],
+                            }
+                        )
+                    snapshot = await uow.mastery.get_snapshot(DEFAULT_USER_ID, node.id)
+                    events = await uow.mastery.list_events(DEFAULT_USER_ID, node.id)
+                    review = await uow.reviews.get(DEFAULT_USER_ID, node.id)
+                    node_data.append(
+                        {
+                            "id": node.id,
+                            "title": node.title,
+                            "description": node.description,
+                            "lesson_content": node.lesson_content,
+                            "difficulty": node.difficulty,
+                            "exercises": exercise_data,
+                            "mastery": (
+                                {
+                                    "score": snapshot.score,
+                                    "attempt_count": snapshot.attempt_count,
+                                    "correct_count": snapshot.correct_count,
+                                    "updated_at": snapshot.updated_at.isoformat(),
+                                }
+                                if snapshot
+                                else None
+                            ),
+                            "mastery_events": [
+                                {
+                                    "id": event.id,
+                                    "attempt_id": event.attempt_id,
+                                    "type": event.event_type.value,
+                                    "delta": event.delta,
+                                    "occurred_at": event.occurred_at.isoformat(),
+                                }
+                                for event in events
+                            ],
+                            "review": (
+                                {
+                                    "due_at": review.due_at.isoformat(),
+                                    "last_review_at": (
+                                        review.last_review_at.isoformat()
+                                        if review.last_review_at
+                                        else None
+                                    ),
+                                    "card_json": review.card_json,
+                                }
+                                if review
+                                else None
+                            ),
+                        }
+                    )
+                exported_goals.append(
+                    {
+                        "id": goal.id,
+                        "title": goal.title,
+                        "description": goal.description,
+                        "desired_outcome": goal.desired_outcome,
+                        "weekly_minutes": goal.weekly_minutes,
+                        "target_date": (
+                            goal.target_date.isoformat() if goal.target_date else None
+                        ),
+                        "status": goal.status.value,
+                        "nodes": node_data,
+                        "edges": [
+                            {
+                                "source_node_id": edge.source_node_id,
+                                "target_node_id": edge.target_node_id,
+                                "relation": edge.relation.value,
+                            }
+                            for edge in edges
+                        ],
+                        "plans": [
+                            {
+                                "id": plan.id,
+                                "version": plan.version,
+                                "status": plan.status.value,
+                                "items": [
+                                    {
+                                        "id": item.id,
+                                        "knowledge_node_id": item.knowledge_node_id,
+                                        "title": item.title,
+                                        "position": item.position,
+                                        "estimated_minutes": item.estimated_minutes,
+                                        "status": item.status.value,
+                                    }
+                                    for item in plan.items
+                                ],
+                            }
+                            for plan in plans
+                        ],
+                    }
+                )
+        return {
+            "schema": "learnloop.learning-data",
+            "version": "1.0.0",
+            "exported_at": self._dependencies.clock().isoformat(),
+            "goals": exported_goals,
+        }
+
+
+class GetLearningInsights:
+    def __init__(self, dependencies: ApplicationDependencies) -> None:
+        self._dependencies = dependencies
+
+    async def execute(self, goal_id: str) -> LearningInsights:
+        now = self._dependencies.clock().astimezone(UTC)
+        week_start = now - timedelta(days=7)
+        async with self._dependencies.uow_factory() as uow:
+            goal = await uow.goals.get(goal_id)
+            if goal is None:
+                raise NotFoundError("learning goal", goal_id)
+            nodes = await uow.knowledge.list_nodes(goal_id)
+            edges = await uow.knowledge.list_edges(goal_id)
+            plans = await uow.plans.list_for_goal(goal_id)
+            latest_plan = plans[-1] if plans else None
+            status_by_node = {
+                item.knowledge_node_id: item.status.value
+                for item in (latest_plan.items if latest_plan else ())
+            }
+            node_insights: list[KnowledgeNodeInsight] = []
+            trend: list[MasteryTrendPoint] = []
+            weekly_attempts = 0
+            weekly_correct = 0
+            mastery_scores: list[float] = []
+            for node in nodes:
+                snapshot = await uow.mastery.get_snapshot(DEFAULT_USER_ID, node.id)
+                score = snapshot.score if snapshot is not None else 0.0
+                mastery_scores.append(score)
+                node_insights.append(
+                    KnowledgeNodeInsight(
+                        id=node.id,
+                        title=node.title,
+                        difficulty=node.difficulty,
+                        mastery_score=score,
+                        status=status_by_node.get(node.id, "unplanned"),
+                    )
+                )
+                projection: MasterySnapshot | None = None
+                for event in await uow.mastery.list_events(DEFAULT_USER_ID, node.id):
+                    projection = apply_mastery_event(projection, event)
+                    trend.append(
+                        MasteryTrendPoint(
+                            knowledge_node_id=node.id,
+                            knowledge_node_title=node.title,
+                            score=projection.score,
+                            event_type=event.event_type.value,
+                            occurred_at=event.occurred_at,
+                        )
+                    )
+                for exercise in await uow.exercises.list_for_node(node.id):
+                    for attempt in await uow.exercises.list_attempts(exercise.id):
+                        if week_start <= attempt.attempted_at.astimezone(UTC) <= now:
+                            weekly_attempts += 1
+                            weekly_correct += int(attempt.is_correct)
+            completed_items = sum(
+                item.status == PlanItemStatus.COMPLETED
+                for item in (latest_plan.items if latest_plan else ())
+            )
+            return LearningInsights(
+                goal_id=goal_id,
+                nodes=tuple(node_insights),
+                edges=tuple(
+                    KnowledgeEdgeInsight(
+                        source_node_id=edge.source_node_id,
+                        target_node_id=edge.target_node_id,
+                        relation=edge.relation.value,
+                    )
+                    for edge in edges
+                ),
+                mastery_trend=tuple(
+                    sorted(trend, key=lambda point: point.occurred_at)
+                ),
+                weekly=WeeklyLearningSummary(
+                    attempts=weekly_attempts,
+                    correct_attempts=weekly_correct,
+                    completed_plan_items=completed_items,
+                    average_mastery=(
+                        sum(mastery_scores) / len(mastery_scores)
+                        if mastery_scores
+                        else 0.0
+                    ),
+                ),
+            )
 
 
 class CreateStudyPlan:

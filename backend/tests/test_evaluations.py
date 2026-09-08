@@ -1,0 +1,22 @@
+"""Offline evaluation metrics and regression-gate tests."""
+
+from datetime import UTC, datetime
+from pathlib import Path
+
+from evals.runner import run, write_report
+
+DATASET = Path(__file__).parents[1] / "evals" / "datasets" / "v1.json"
+
+
+def test_v1_evaluation_dataset_meets_all_thresholds(tmp_path: Path) -> None:
+    report = run(DATASET, now=datetime(2026, 1, 1, tzinfo=UTC))
+    output = tmp_path / "report.json"
+    write_report(report, output)
+
+    values = {metric["name"]: metric["value"] for metric in report.metrics}
+    assert report.dataset_version == "1.0.0"
+    assert report.passed is True
+    assert values["rag_recall_at_k"] == 1.0
+    assert values["rag_mrr"] == 0.611111
+    assert values["objective_grading_accuracy"] == 1.0
+    assert output.read_text(encoding="utf-8").endswith("\n")

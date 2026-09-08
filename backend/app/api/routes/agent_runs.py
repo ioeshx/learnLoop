@@ -10,7 +10,14 @@ from fastapi.responses import StreamingResponse
 
 from app.agent.execution import AgentEvent, AgentRun, AgentRuntime
 from app.api.dependencies import AgentRuntimeDep
-from app.api.schemas import AgentRunResponse, ResumeAgentRunRequest
+from app.api.schemas import (
+    AgentEventResponse,
+    AgentRunResponse,
+    AgentTraceResponse,
+    ModelCallTraceResponse,
+    ResumeAgentRunRequest,
+    ToolCallTraceResponse,
+)
 
 router = APIRouter(prefix="/agent")
 
@@ -58,6 +65,15 @@ async def resume_agent_run(
     )
 
 
+@router.get("/runs", response_model=list[AgentRunResponse])
+async def list_agent_runs(
+    runtime: AgentRuntimeDep,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[AgentRunResponse]:
+    runs = await runtime.run_store.list_runs(limit=limit)
+    return [AgentRunResponse.from_execution(run) for run in runs]
+
+
 @router.get("/runs/{run_id}", response_model=AgentRunResponse)
 async def get_agent_run(
     run_id: str, runtime: AgentRuntimeDep
@@ -71,6 +87,36 @@ async def get_agent_run_state(
 ) -> dict[str, object]:
     run = await _get_run(runtime, run_id)
     return await runtime.get_checkpoint_state(run)
+
+
+@router.get("/runs/{run_id}/trace", response_model=AgentTraceResponse)
+async def get_agent_trace(
+    run_id: str, runtime: AgentRuntimeDep
+) -> AgentTraceResponse:
+    run = await _get_run(runtime, run_id)
+    events = await runtime.run_store.list_events(run.run_id)
+    tool_calls = await runtime.run_store.list_tool_calls(run.run_id)
+    model_calls = await runtime.run_store.list_model_calls(run.run_id)
+    return AgentTraceResponse(
+        run=AgentRunResponse.from_execution(run),
+        events=[AgentEventResponse.from_execution(event) for event in events],
+        tool_calls=[
+            ToolCallTraceResponse.from_execution(call) for call in tool_calls
+        ],
+        model_calls=[
+            ModelCallTraceResponse.from_execution(call) for call in model_calls
+        ],
+        total_tokens=sum(call.total_tokens for call in model_calls),
+        total_model_duration_ms=sum(call.duration_ms for call in model_calls),
+        total_tool_duration_ms=sum(call.duration_ms or 0.0 for call in tool_calls),
+    )
+
+
+@router.get("/prompts")
+async def list_prompt_versions(
+    runtime: AgentRuntimeDep,
+) -> list[dict[str, str]]:
+    return await runtime.run_store.list_prompt_versions()
 
 
 @router.get("/runs/{run_id}/events")

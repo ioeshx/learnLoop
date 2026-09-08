@@ -17,7 +17,39 @@ EventKind = Literal[
     "interrupt_created",
     "run_completed",
     "run_failed",
+    "model_completed",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallTrace:
+    call_id: str
+    run_id: str
+    tool_name: str
+    arguments: dict[str, object]
+    result_summary: dict[str, object] | None
+    status: str
+    duration_ms: float | None
+    error: str | None
+    started_at: datetime
+    completed_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class ModelCallTrace:
+    call_id: str
+    run_id: str | None
+    prompt_name: str
+    prompt_version: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    duration_ms: float
+    attempts: int
+    repaired: bool
+    error: str | None
+    created_at: datetime
 
 
 @dataclass(frozen=True, slots=True)

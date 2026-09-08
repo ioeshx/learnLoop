@@ -1,0 +1,61 @@
+{
+  "version": "1.0.0",
+  "structured_outputs": [
+    {"id": "valid-exercise", "valid": true},
+    {"id": "repaired-exercise", "valid": true},
+    {"id": "invalid-plan", "valid": false}
+  ],
+  "tool_calls": [
+    {"id": "load-session", "expected": {"tool": "get_study_session", "arguments": ["session_id"]}, "actual": {"tool": "get_study_session", "arguments": ["session_id"]}},
+    {"id": "retrieve-source", "expected": {"tool": "search_learning_resources", "arguments": ["knowledge_node_id"]}, "actual": {"tool": "search_learning_resources", "arguments": ["knowledge_node_id"]}},
+    {"id": "bad-tool", "expected": {"tool": "update_mastery", "arguments": ["session_id", "exercise_id"]}, "actual": {"tool": "update_mastery", "arguments": ["session_id"]}}
+  ],
+  "checkpoint_recovery": [
+    {"id": "answer-interrupt", "recovered": true},
+    {"id": "grade-interrupt", "recovered": true},
+    {"id": "plan-approval", "recovered": true}
+  ],
+  "retrieval": [
+    {"id": "bfs", "k": 3, "relevant": ["chunk-bfs"], "ranking": ["chunk-bfs", "chunk-dfs", "chunk-graph"]},
+    {"id": "dfs", "k": 3, "relevant": ["chunk-dfs"], "ranking": ["chunk-graph", "chunk-dfs", "chunk-bfs"]},
+    {"id": "queue", "k": 3, "relevant": ["chunk-queue"], "ranking": ["chunk-stack", "chunk-set", "chunk-queue"]}
+  ],
+  "citations": [
+    {"id": "supported-bfs", "expected_supported": true, "predicted_supported": true},
+    {"id": "unsupported-complexity", "expected_supported": false, "predicted_supported": false},
+    {"id": "missed-support", "expected_supported": true, "predicted_supported": false}
+  ],
+  "objective_grading": [
+    {"id": "single-correct", "answer_key": ["队列"], "selected": ["队列"], "expected_correct": true},
+    {"id": "single-wrong", "answer_key": ["队列"], "selected": ["栈"], "expected_correct": false},
+    {"id": "multiple-order", "answer_key": ["A", "C"], "selected": ["C", "A"], "expected_correct": true}
+  ],
+  "short_answer_consistency": [
+    {"id": "stable-bfs", "scores": [0.80, 0.82, 0.79], "max_range": 0.05},
+    {"id": "unstable-dfs", "scores": [0.40, 0.75, 0.55], "max_range": 0.10}
+  ],
+  "remediation": [
+    {"id": "recover-first", "recovered": true, "retries": 1},
+    {"id": "recover-second", "recovered": true, "retries": 2},
+    {"id": "exhausted", "recovered": false, "retries": 2}
+  ],
+  "model_usage": [
+    {"id": "lesson", "tokens": 820, "latency_ms": 780, "cost_usd": 0.0012},
+    {"id": "exercise", "tokens": 430, "latency_ms": 510, "cost_usd": 0.0007},
+    {"id": "diagnosis", "tokens": 510, "latency_ms": 620, "cost_usd": 0.0009}
+  ],
+  "thresholds": {
+    "structured_output_valid_rate": 0.65,
+    "tool_call_accuracy": 0.65,
+    "checkpoint_recovery_rate": 1.0,
+    "rag_recall_at_k": 1.0,
+    "rag_mrr": 0.60,
+    "citation_support_accuracy": 0.65,
+    "objective_grading_accuracy": 1.0,
+    "short_answer_consistency_rate": 0.50,
+    "remediation_success_rate": 0.65,
+    "model_latency_p95_ms": 1000.0,
+    "model_tokens_average": 1000.0,
+    "model_cost_average_usd": 0.002
+  }
+}

@@ -18,6 +18,25 @@ class JsonFormatter(logging.Formatter):
         }
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
+        for field in (
+            "request_id",
+            "run_id",
+            "graph",
+            "node",
+            "tool",
+            "prompt_name",
+            "prompt_version",
+            "model",
+            "status",
+            "duration_ms",
+            "total_tokens",
+            "http_method",
+            "http_path",
+            "http_status",
+        ):
+            value = getattr(record, field, None)
+            if value is not None:
+                payload[field] = value
         return json.dumps(payload, ensure_ascii=False)
 
 

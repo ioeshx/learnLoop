@@ -1,7 +1,7 @@
 """Framework-independent inputs and results for learning use cases."""
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 from app.domain.exercises.models import Exercise, ExerciseAttempt
 from app.domain.knowledge.models import KnowledgeNode
@@ -132,3 +132,45 @@ class DueReview:
     priority_score: float
     overdue_days: int
     reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeNodeInsight:
+    id: str
+    title: str
+    difficulty: float
+    mastery_score: float
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeEdgeInsight:
+    source_node_id: str
+    target_node_id: str
+    relation: str
+
+
+@dataclass(frozen=True, slots=True)
+class MasteryTrendPoint:
+    knowledge_node_id: str
+    knowledge_node_title: str
+    score: float
+    event_type: str
+    occurred_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class WeeklyLearningSummary:
+    attempts: int
+    correct_attempts: int
+    completed_plan_items: int
+    average_mastery: float
+
+
+@dataclass(frozen=True, slots=True)
+class LearningInsights:
+    goal_id: str
+    nodes: tuple[KnowledgeNodeInsight, ...]
+    edges: tuple[KnowledgeEdgeInsight, ...]
+    mastery_trend: tuple[MasteryTrendPoint, ...]
+    weekly: WeeklyLearningSummary

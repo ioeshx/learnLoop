@@ -1,9 +1,12 @@
 """LearnLoop API application entry point."""
 
-from collections.abc import AsyncGenerator
+import logging
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from time import perf_counter
+from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agent.execution import open_agent_runtime
@@ -36,6 +39,8 @@ from app.infrastructure.review import FsrsReviewScheduler
 from app.infrastructure.storage import LocalDocumentStorage
 from app.logging import configure_logging
 from app.workers import JobService, SqliteJobStore
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -153,6 +158,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = resolved_settings
+
+    @app.middleware("http")
+    async def observe_http(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        request_id = request.headers.get("X-Request-ID") or str(uuid4())
+        started = perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            logger.exception(
+                "http_request_failed",
+                extra={
+                    "request_id": request_id,
+                    "http_method": request.method,
+                    "http_path": request.url.path,
+                    "duration_ms": round((perf_counter() - started) * 1000, 3),
+                },
+            )
+            raise
+        duration_ms = round((perf_counter() - started) * 1000, 3)
+        response.headers["X-Request-ID"] = request_id
+        response.headers["Server-Timing"] = f"app;dur={duration_ms}"
+        logger.info(
+            "http_request_completed",
+            extra={
+                "request_id": request_id,
+                "http_method": request.method,
+                "http_path": request.url.path,
+                "http_status": response.status_code,
+                "duration_ms": duration_ms,
+            },
+        )
+        return response
     app.add_middleware(
         CORSMiddleware,
         allow_origins=resolved_settings.cors_origins,

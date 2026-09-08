@@ -113,6 +113,10 @@ async def test_checkpoint_survives_restart_and_resumes_same_thread(
         assert final_events[-1].event == "run_completed"
         state = await second_runtime.get_checkpoint_state(restored)
         assert state["values"]["status"] == "completed"  # type: ignore[index]
+        tool_calls = await second_runtime.run_store.list_tool_calls(run.run_id)
+        assert tool_calls
+        assert all(call.status == "succeeded" for call in tool_calls)
+        assert all(call.duration_ms is not None for call in tool_calls)
 
     assert len(factory.state.attempts) == 1
 
@@ -179,6 +183,15 @@ async def test_agent_sse_stream_replays_and_resumes(
                 json={"value": {"action": "accept"}},
             )
             assert _parse_sse(completed.text)[-1]["event"] == "run_completed"
+
+            runs = await client.get("/api/v1/agent/runs")
+            assert runs.status_code == 200
+            assert runs.json()[0]["run_id"] == run_id
+
+            trace = await client.get(f"/api/v1/agent/runs/{run_id}/trace")
+            assert trace.status_code == 200
+            assert trace.json()["tool_calls"]
+            assert trace.json()["total_tool_duration_ms"] >= 0
 
             duplicate = await client.post(
                 f"/api/v1/agent/runs/{run_id}/resume",

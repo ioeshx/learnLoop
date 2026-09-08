@@ -106,6 +106,30 @@ async def test_learning_api_completes_the_vertical_slice(
         assert due_response.status_code == 200
         assert len(due_response.json()) == 1
 
+        goals_response = await client.get("/api/v1/goals")
+        assert goals_response.status_code == 200
+        assert goals_response.json()[0]["id"] == goal["id"]
+
+        insights_response = await client.get(
+            f"/api/v1/goals/{goal['id']}/insights"
+        )
+        assert insights_response.status_code == 200
+        insights = insights_response.json()
+        assert insights["weekly"]["attempts"] == 1
+        assert insights["weekly"]["correct_attempts"] == 1
+        assert insights["mastery_trend"][-1]["score"] == 0.15
+        assert len(insights["nodes"]) == 3
+
+        export_response = await client.get("/api/v1/data/export")
+        assert export_response.status_code == 200
+        assert export_response.headers["content-type"].startswith(
+            "application/json"
+        )
+        assert "attachment" in export_response.headers["content-disposition"]
+        export = export_response.json()
+        assert export["schema"] == "learnloop.learning-data"
+        assert export["goals"][0]["nodes"][0]["exercises"]
+
 
 @pytest.mark.asyncio
 async def test_mutating_endpoint_requires_idempotency_key(

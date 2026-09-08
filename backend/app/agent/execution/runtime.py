@@ -1,6 +1,7 @@
 """Durable LangGraph runtime with normalized replayable events."""
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -25,8 +26,10 @@ from app.agent.tools import LearningTools
 from app.application import ApplicationDependencies
 from app.config import Settings
 from app.infrastructure.llm import StructuredModel
+from app.observability import bind_agent_run, reset_agent_run
 
 _INITIAL = object()
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -67,6 +70,16 @@ class AgentRuntime:
                 "graph": run.graph_kind,
                 "thread_id": run.thread_id,
                 "resumed": resumed,
+            },
+        )
+        run_token = bind_agent_run(run.run_id)
+        started_at = datetime.now(UTC)
+        logger.info(
+            "agent_run_started",
+            extra={
+                "run_id": run.run_id,
+                "graph": run.graph_kind,
+                "status": "running",
             },
         )
         try:
@@ -110,6 +123,19 @@ class AgentRuntime:
 
             if interrupted:
                 await self.run_store.set_status(run.run_id, "awaiting_input")
+                logger.info(
+                    "agent_run_awaiting_input",
+                    extra={
+                        "run_id": run.run_id,
+                        "graph": run.graph_kind,
+                        "status": "awaiting_input",
+                        "duration_ms": round(
+                            (datetime.now(UTC) - started_at).total_seconds()
+                            * 1000,
+                            3,
+                        ),
+                    },
+                )
                 return
             snapshot = await graph.aget_state(config)
             values = _as_object_dict(snapshot.values)
@@ -123,6 +149,18 @@ class AgentRuntime:
                     "summary": values.get("summary"),
                 },
             )
+            logger.info(
+                "agent_run_completed",
+                extra={
+                    "run_id": run.run_id,
+                    "graph": run.graph_kind,
+                    "status": "completed",
+                    "duration_ms": round(
+                        (datetime.now(UTC) - started_at).total_seconds() * 1000,
+                        3,
+                    ),
+                },
+            )
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -132,6 +170,20 @@ class AgentRuntime:
                 "run_failed",
                 data={"message": str(error), "error_type": type(error).__name__},
             )
+            logger.exception(
+                "agent_run_failed",
+                extra={
+                    "run_id": run.run_id,
+                    "graph": run.graph_kind,
+                    "status": "failed",
+                    "duration_ms": round(
+                        (datetime.now(UTC) - started_at).total_seconds() * 1000,
+                        3,
+                    ),
+                },
+            )
+        finally:
+            reset_agent_run(run_token)
 
     async def start_execution(
         self, run: AgentRun, *, resume: object = _INITIAL
@@ -207,11 +259,51 @@ class AgentRuntime:
             return None
         node = data.get("tool")
         details = data.get("data", {})
+        tool_name = node if isinstance(node, str) else "unknown"
+        payload = _as_object_dict(details)
+        call_id = payload.get("call_id")
+        if isinstance(call_id, str):
+            if event == "tool_started":
+                started_at = payload.get("started_at")
+                await self.run_store.start_tool_call(
+                    call_id=call_id,
+                    run_id=run_id,
+                    tool_name=tool_name,
+                    arguments=_as_object_dict(payload.get("arguments")),
+                    started_at=(
+                        datetime.fromisoformat(started_at)
+                        if isinstance(started_at, str)
+                        else datetime.now(UTC)
+                    ),
+                )
+            else:
+                completed_at = payload.get("completed_at")
+                duration_ms = payload.get("duration_ms", 0.0)
+                await self.run_store.finish_tool_call(
+                    call_id=call_id,
+                    result_summary=_as_object_dict(payload.get("result_summary")),
+                    status=str(payload.get("status", "succeeded")),
+                    duration_ms=(
+                        float(duration_ms)
+                        if isinstance(duration_ms, (int, float))
+                        else 0.0
+                    ),
+                    error=(
+                        str(payload["error"])
+                        if payload.get("error") is not None
+                        else None
+                    ),
+                    completed_at=(
+                        datetime.fromisoformat(completed_at)
+                        if isinstance(completed_at, str)
+                        else datetime.now(UTC)
+                    ),
+                )
         return await self.run_store.append_event(
             run_id,
             event,
             node=node if isinstance(node, str) else None,
-            data=_as_object_dict(details),
+            data=payload,
         )
 
     def _graph_and_context(
@@ -295,11 +387,15 @@ async def open_agent_runtime(
             model=model,
             retention_days=settings.checkpoint_retention_days,
         )
+        if model is not None:
+            model.set_observer(run_store.record_model_call)
         await runtime.cleanup_expired()
         try:
             yield runtime
         finally:
             await runtime.shutdown()
+            if model is not None:
+                model.set_observer(None)
             await run_store.close()
 
 
