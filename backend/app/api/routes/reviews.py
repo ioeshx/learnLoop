@@ -40,6 +40,8 @@ async def get_due_reviews(
 async def get_adaptive_recommendation(
     knowledge_node_id: str, dependencies: ApplicationDependenciesDep
 ) -> AdaptiveRecommendationResponse:
+    """返回知识点当前难度建议、前置缺口和可展示的决策原因。"""
+
     recommendation = await GetAdaptiveRecommendation(dependencies).execute(
         knowledge_node_id
     )
@@ -56,6 +58,8 @@ async def start_review_session(
         str, Header(alias="Idempotency-Key", min_length=1, max_length=200)
     ],
 ) -> SessionResponse:
+    """使用幂等键启动已到期知识点的独立自适应复习会话。"""
+
     details = await StartReviewSession(dependencies).execute(
         StartReviewSessionCommand(
             knowledge_node_id=payload.knowledge_node_id,
@@ -71,6 +75,8 @@ async def defer_review(
     payload: DeferReviewRequest,
     dependencies: ApplicationDependenciesDep,
 ) -> ReviewScheduleResponse:
+    """在允许的天数范围内延期复习，并返回更新后的日程。"""
+
     schedule = await DeferReview(dependencies).execute(
         knowledge_node_id, days=payload.days
     )

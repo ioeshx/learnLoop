@@ -33,6 +33,12 @@ from app.workers.store import SqliteJobStore
 async def open_background_worker(
     settings: Settings,
 ) -> AsyncIterator[BackgroundWorker]:
+    """组装独立 Worker 所需资源，并在退出时按依赖顺序释放。
+
+    启动时创建数据库、资料存储、Embedding、RAG 服务和任务 Store，随后显式注册三类
+    Handler；上下文结束时关闭网络客户端、SQLite 连接和 SQLAlchemy Engine。
+    """
+
     database = create_database(settings)
     resource_store: SqliteResourceStore | None = None
     job_store: SqliteJobStore | None = None
@@ -40,6 +46,8 @@ async def open_background_worker(
     rag_service: RagService | None = None
     try:
         def uow_factory() -> SqlAlchemyUnitOfWork:
+            """为每次后台领域操作创建独立事务边界。"""
+
             return SqlAlchemyUnitOfWork(database.session_factory)
 
         resource_store = await SqliteResourceStore.open(settings.database_path)

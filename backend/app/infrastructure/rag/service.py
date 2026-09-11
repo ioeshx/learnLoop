@@ -81,6 +81,8 @@ class RagService:
         knowledge_node_id: str | None = None,
         title: str | None = None,
     ) -> LearningResource:
+        """校验归属、原子保存文件并创建待处理元数据，不执行耗时解析和索引。"""
+
         await self._validate_scope(goal_id, knowledge_node_id)
         stored = self._storage.save(source)
         duplicate = await self._store.find_duplicate(
@@ -131,6 +133,8 @@ class RagService:
         knowledge_node_id: str | None = None,
         title: str | None = None,
     ) -> LearningResource:
+        """安全抓取网页、保存原文并创建待处理元数据，供后台任务后续索引。"""
+
         await self._validate_scope(goal_id, knowledge_node_id)
         page = await self._web_fetcher.fetch(url)
         stored = self._storage.save(io.BytesIO(page.content))
@@ -165,6 +169,12 @@ class RagService:
         *,
         report_progress: Callable[[int, str], Awaitable[None]] | None = None,
     ) -> LearningResource:
+        """读取待处理原文，解析并构建索引，同时通过回调报告阶段进度。
+
+        已就绪资料直接返回以保证重复执行安全；失败时先在资料记录上保存错误，再把异常
+        交给 Worker 的重试策略处理。
+        """
+
         resource = await self.get(resource_id)
         if resource.status == ResourceStatus.READY:
             return resource

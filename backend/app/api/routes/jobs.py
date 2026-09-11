@@ -22,6 +22,8 @@ async def list_jobs(
     job_type: JobType | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[BackgroundJobResponse]:
+    """按状态和类型查询最近任务，并转换为稳定的 HTTP 响应结构。"""
+
     jobs = await service.list_jobs(
         status=job_status, job_type=job_type, limit=limit
     )
@@ -30,16 +32,22 @@ async def list_jobs(
 
 @router.get("/{job_id}", response_model=BackgroundJobResponse)
 async def get_job(job_id: str, service: JobServiceDep) -> BackgroundJobResponse:
+    """返回单个后台任务的状态、进度、结果和错误信息。"""
+
     return BackgroundJobResponse.from_domain(await service.get(job_id))
 
 
 @router.post("/{job_id}/cancel", response_model=BackgroundJobResponse)
 async def cancel_job(job_id: str, service: JobServiceDep) -> BackgroundJobResponse:
+    """请求取消任务；具体即时或协作式取消语义由 JobService 决定。"""
+
     return BackgroundJobResponse.from_domain(await service.cancel(job_id))
 
 
 @router.post("/{job_id}/retry", response_model=BackgroundJobResponse)
 async def retry_job(job_id: str, service: JobServiceDep) -> BackgroundJobResponse:
+    """人工重试失败或已取消任务，并将非法状态转换为 HTTP 409。"""
+
     try:
         job = await service.retry(job_id)
     except ValueError as error:
@@ -59,6 +67,8 @@ async def create_weekly_report_job(
     service: JobServiceDep,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1)],
 ) -> BackgroundJobResponse:
+    """接受周报参数并以调用方幂等键创建异步聚合任务。"""
+
     try:
         job = await service.enqueue_weekly_report(
             idempotency_key=idempotency_key,
@@ -82,6 +92,8 @@ async def create_due_review_job(
     service: JobServiceDep,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1)],
 ) -> BackgroundJobResponse:
+    """接受复习截止时间并以调用方幂等键创建队列快照任务。"""
+
     try:
         job = await service.enqueue_due_reviews(
             idempotency_key=idempotency_key,

@@ -5,6 +5,12 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class PrerequisiteMastery:
+    """一个前置知识点的掌握度读模型。
+
+    该数据类把知识点标识、展示标题和当前分数交给自适应规则，用于判断学习者是否需要
+    先补齐依赖；它不负责持久化，也不修改 MasterySnapshot。
+    """
+
     knowledge_node_id: str
     title: str
     score: float
@@ -12,6 +18,12 @@ class PrerequisiteMastery:
 
 @dataclass(frozen=True, slots=True)
 class AdaptiveRecommendation:
+    """一次可解释的自适应难度决策结果。
+
+    该数据类同时保留当前掌握度、知识点原始难度、规则计算出的目标难度、未掌握的前置
+    知识点和面向用户的原因，供应用服务、Agent Tool、题目生成器和前端共同消费。
+    """
+
     mastery_score: float
     base_difficulty: float
     target_difficulty: float
@@ -25,7 +37,12 @@ def recommend_difficulty(
     mastery_score: float,
     prerequisites: tuple[PrerequisiteMastery, ...] = (),
 ) -> AdaptiveRecommendation:
-    """Return a bounded, deterministic recommendation that can be shown to users."""
+    """根据掌握度和前置缺口生成有界、确定且可展示的难度建议。
+
+    规则先把掌握度限制到 0～1，根据低掌握、巩固或高掌握区间调整难度；若存在低于
+    60% 的前置知识点则进一步限制难度，最后把目标值约束在 1～5 并记录每条原因。
+    """
+
     mastery = min(1.0, max(0.0, mastery_score))
     gaps = tuple(item for item in prerequisites if item.score < 0.6)
     reasons: list[str] = []

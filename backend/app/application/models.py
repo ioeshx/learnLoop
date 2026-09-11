@@ -31,6 +31,8 @@ class StartSessionCommand:
 
 @dataclass(frozen=True, slots=True)
 class StartReviewSessionCommand:
+    """启动复习会话的应用命令，携带知识点和防止重复创建的幂等键。"""
+
     knowledge_node_id: str
     idempotency_key: str
 
@@ -45,6 +47,8 @@ class SubmitAttemptCommand:
 
 @dataclass(frozen=True, slots=True)
 class CorrectAttemptCommand:
+    """纠正已持久化作答的命令，用新选项触发评分和掌握度重放。"""
+
     session_id: str
     attempt_id: str
     selected_options: tuple[str, ...]
@@ -115,6 +119,12 @@ class AttemptResult:
 
 @dataclass(frozen=True, slots=True)
 class SessionDetails:
+    """学习或复习会话的完整应用层视图。
+
+    该数据类聚合会话、计划项、知识点、当前练习、最近作答和自适应建议，避免 API 与
+    Agent 分别拼装领域对象；阶段九加入的 `adaptation` 用于解释当前练习难度。
+    """
+
     session: StudySession
     plan_id: str
     plan_item: PlanItem
@@ -126,6 +136,12 @@ class SessionDetails:
 
 @dataclass(frozen=True, slots=True)
 class DueReview:
+    """到期复习队列中的展示项。
+
+    该数据类将复习日程与知识点、可用练习、逾期天数、优先级分数和解释文本组合起来，
+    使 API 和后台任务共享同一排序结果。
+    """
+
     schedule: ReviewSchedule
     knowledge_node: KnowledgeNode
     exercise: Exercise | None

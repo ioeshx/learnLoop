@@ -14,7 +14,11 @@ from app.infrastructure.llm.structured import StructuredModel
 
 
 class LlmReviewExerciseGenerator:
+    """使用结构化 LLM 生成自适应复习题，并在模型失败时确定性降级。"""
+
     def __init__(self, model: StructuredModel) -> None:
+        """保存结构化模型，同时准备固定题生成器作为安全回退。"""
+
         self._model = model
         self._fallback = FixedReviewExerciseGenerator()
 
@@ -26,6 +30,12 @@ class LlmReviewExerciseGenerator:
         *,
         now: datetime,
     ) -> Exercise:
+        """把目标难度和解释注入版本化 Prompt，经校验后构造领域练习。
+
+        模型基础设施错误或领域值错误不会阻断复习流程，而是回退到固定选择题；成功输出
+        仍通过 Exercise 工厂校验选项和答案键。
+        """
+
         try:
             proposal = (
                 await self._model.generate(

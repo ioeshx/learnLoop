@@ -91,6 +91,8 @@ async def correct_attempt(
     payload: CorrectAttemptRequest,
     dependencies: ApplicationDependenciesDep,
 ) -> AttemptResultResponse:
+    """纠正一次作答，并返回重放事件后更新的评分与掌握度。"""
+
     result = await CorrectExerciseAttempt(dependencies).execute(
         CorrectAttemptCommand(
             session_id=session_id,

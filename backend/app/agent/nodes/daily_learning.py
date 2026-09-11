@@ -541,6 +541,8 @@ async def _create_remediation_exercise(
     *,
     remediation_count: int,
 ) -> dict[str, object]:
+    """以 Run 和补救次数生成幂等键，通过可观测 Tool 调用创建下一道补救题。"""
+
     run_id = _required_string(state, "run_id")
     return await call_tool(
         runtime,

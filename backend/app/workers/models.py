@@ -8,12 +8,16 @@ from uuid import uuid4
 
 
 class JobType(StrEnum):
+    """后台任务类型枚举，用稳定字符串把持久化记录映射到具体 Handler。"""
+
     RESOURCE_PROCESS = "resource.process"
     WEEKLY_REPORT = "report.weekly"
     DUE_REVIEWS = "reviews.generate_due"
 
 
 class JobStatus(StrEnum):
+    """后台任务生命周期状态，区分等待、执行和三种终态。"""
+
     QUEUED = "queued"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -30,6 +34,13 @@ TERMINAL_JOB_STATUSES = {
 
 @dataclass(frozen=True, slots=True)
 class BackgroundJob:
+    """后台任务的不可变领域快照。
+
+    该数据类同时承载任务输入、进度、重试计数、租约所有权和执行结果，是 API、
+    Worker 与 SQLite Store 之间传递任务状态的统一结构；状态变化通过 Store 原子更新后
+    重新构造快照，避免多个组件在内存中直接修改同一个任务对象。
+    """
+
     id: str
     job_type: JobType
     payload: dict[str, Any]
@@ -60,6 +71,8 @@ class BackgroundJob:
         max_attempts: int,
         idempotency_key: str | None = None,
     ) -> "BackgroundJob":
+        """创建处于排队状态的任务，并规范化幂等键和初始化执行元数据。"""
+
         if max_attempts < 1:
             raise ValueError("max_attempts must be positive")
         normalized_key = idempotency_key.strip() if idempotency_key else None
@@ -86,4 +99,3 @@ class BackgroundJob:
             finished_at=None,
             updated_at=now,
         )
-

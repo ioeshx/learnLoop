@@ -34,6 +34,8 @@ RagServiceDep = Annotated[RagService, Depends(get_rag_service)]
 
 
 async def get_job_service(request: Request) -> JobService:
+    """从 FastAPI 生命周期状态中取得共享的后台任务应用服务。"""
+
     return cast(JobService, request.app.state.job_service)
 
 

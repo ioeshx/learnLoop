@@ -11,11 +11,17 @@ from app.workers.models import BackgroundJob, JobStatus, JobType
 
 
 class SqliteJobStore:
+    """持久化后台队列，并用 SQLite 事务实现跨进程任务状态协调。"""
+
     def __init__(self, connection: aiosqlite.Connection) -> None:
+        """保存专用连接；任务状态转换都通过该连接提交。"""
+
         self._connection = connection
 
     @classmethod
     async def open(cls, path: Path) -> "SqliteJobStore":
+        """打开队列数据库，并启用外键、WAL 和忙等待以改善并发访问。"""
+
         connection = await aiosqlite.connect(path.as_posix(), isolation_level=None)
         connection.row_factory = aiosqlite.Row
         await connection.execute("PRAGMA foreign_keys = ON")
@@ -24,9 +30,17 @@ class SqliteJobStore:
         return cls(connection)
 
     async def close(self) -> None:
+        """关闭后台队列持有的 SQLite 连接。"""
+
         await self._connection.close()
 
     async def enqueue(self, job: BackgroundJob) -> BackgroundJob:
+        """插入新任务，幂等键冲突时返回载荷一致的已有任务。
+
+        唯一索引负责解决并发入队竞争；若同一幂等键对应不同载荷则显式报错，避免调用方
+        错把另一项工作当作本次任务。
+        """
+
         try:
             await self._connection.execute(
                 """
@@ -78,6 +92,8 @@ class SqliteJobStore:
             return existing
 
     async def get(self, job_id: str) -> BackgroundJob | None:
+        """按主键读取任务并转换为领域数据类，不存在时返回空值。"""
+
         cursor = await self._connection.execute(
             "SELECT * FROM background_jobs WHERE id = ?", (job_id,)
         )
@@ -88,6 +104,8 @@ class SqliteJobStore:
     async def get_by_idempotency_key(
         self, job_type: JobType, idempotency_key: str
     ) -> BackgroundJob | None:
+        """按任务类型和幂等键读取已有任务，用于解决并发插入冲突。"""
+
         cursor = await self._connection.execute(
             """
             SELECT * FROM background_jobs
@@ -106,6 +124,8 @@ class SqliteJobStore:
         job_type: JobType | None = None,
         limit: int = 50,
     ) -> list[BackgroundJob]:
+        """动态组合状态和类型过滤条件，按创建时间倒序返回任务。"""
+
         clauses: list[str] = []
         parameters: list[object] = []
         if status is not None:
@@ -134,6 +154,12 @@ class SqliteJobStore:
         now: datetime,
         lease_seconds: float,
     ) -> BackgroundJob | None:
+        """在立即事务中恢复过期租约并原子领取最早可执行任务。
+
+        `BEGIN IMMEDIATE` 保证多个 Worker 不会同时领取同一行；领取成功后增加尝试次数、
+        写入租约所有者和过期时间，再返回最新快照。
+        """
+
         lease_expires_at = now + timedelta(seconds=lease_seconds)
         try:
             await self._connection.execute("BEGIN IMMEDIATE")
@@ -192,6 +218,8 @@ class SqliteJobStore:
         now: datetime,
         lease_seconds: float,
     ) -> bool:
+        """仅允许租约所有者更新运行进度，同时续租并把进度限制在 0 到 99。"""
+
         cursor = await self._connection.execute(
             """
             UPDATE background_jobs
@@ -222,6 +250,8 @@ class SqliteJobStore:
         now: datetime,
         lease_seconds: float,
     ) -> bool:
+        """延长运行任务的租约；任务失效、取消或所有者不匹配时返回失败。"""
+
         cursor = await self._connection.execute(
             """
             UPDATE background_jobs
@@ -242,6 +272,8 @@ class SqliteJobStore:
         return updated
 
     async def is_cancel_requested(self, job_id: str, worker_id: str) -> bool:
+        """检查取消标记；任务或租约不存在也视为应停止，防止失权 Worker 继续写入。"""
+
         cursor = await self._connection.execute(
             """
             SELECT cancel_requested FROM background_jobs
@@ -261,6 +293,8 @@ class SqliteJobStore:
         result: dict[str, Any] | None,
         now: datetime,
     ) -> bool:
+        """由租约所有者完成任务，原子写入结果和终态；并发取消优先成为取消状态。"""
+
         cursor = await self._connection.execute(
             """
             UPDATE background_jobs
@@ -305,6 +339,12 @@ class SqliteJobStore:
         retry_base_seconds: float,
         retry_max_seconds: float,
     ) -> BackgroundJob | None:
+        """根据取消标记、错误可重试性和剩余次数决定取消、退避重试或失败。
+
+        状态判断和更新位于同一个立即事务中；重试延迟采用受上限约束的指数退避，并在
+        释放租约后返回新的任务快照。
+        """
+
         try:
             await self._connection.execute("BEGIN IMMEDIATE")
             job = await self.get(job_id)
@@ -364,6 +404,8 @@ class SqliteJobStore:
     async def request_cancel(
         self, job_id: str, *, now: datetime
     ) -> BackgroundJob | None:
+        """设置取消请求；尚未领取的任务立即转为取消，运行任务留给心跳检查停止。"""
+
         await self._connection.execute(
             """
             UPDATE background_jobs
@@ -383,6 +425,8 @@ class SqliteJobStore:
     async def cancel_resource_jobs(
         self, resource_id: str, *, now: datetime
     ) -> None:
+        """利用 JSON1 按资源 ID 批量取消排队或运行中的资料处理任务。"""
+
         await self._connection.execute(
             """
             UPDATE background_jobs
@@ -402,6 +446,8 @@ class SqliteJobStore:
         await self._connection.commit()
 
     async def retry(self, job_id: str, *, now: datetime) -> BackgroundJob | None:
+        """清除失败信息、结果、租约和计数，把可人工重试的任务恢复到初始队列状态。"""
+
         await self._connection.execute(
             """
             UPDATE background_jobs
@@ -418,6 +464,12 @@ class SqliteJobStore:
         return await self.get(job_id)
 
     async def _recover_expired(self, now: datetime) -> None:
+        """回收崩溃 Worker 遗留的过期租约。
+
+        已取消任务进入取消终态，耗尽尝试次数的任务失败，其余任务释放租约并重新排队，
+        从而在不依赖外部消息队列的情况下实现崩溃恢复。
+        """
+
         now_value = _iso(now)
         await self._connection.execute(
             """
@@ -456,6 +508,8 @@ class SqliteJobStore:
 
 
 def _job_from_row(row: aiosqlite.Row) -> BackgroundJob:
+    """把 SQLite 行及其中的 JSON、时间字段还原为不可变任务快照。"""
+
     result_value = row["result_json"]
     return BackgroundJob(
         id=str(row["id"]),
@@ -505,6 +559,8 @@ def _job_from_row(row: aiosqlite.Row) -> BackgroundJob:
 
 
 def _json_object(value: str) -> dict[str, Any]:
+    """解析任务 JSON 字段，并拒绝不符合对象约定的数组或标量。"""
+
     parsed = json.loads(value)
     if not isinstance(parsed, dict):
         raise ValueError("background job JSON must be an object")
@@ -512,4 +568,6 @@ def _json_object(value: str) -> dict[str, Any]:
 
 
 def _iso(value: datetime) -> str:
+    """将时区时间转换为 SQLite 中可排序、可往返读取的 ISO 字符串。"""
+
     return value.isoformat()

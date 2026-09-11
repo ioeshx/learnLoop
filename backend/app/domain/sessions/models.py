@@ -13,12 +13,20 @@ class StudySessionStatus(StrEnum):
 
 
 class StudySessionKind(StrEnum):
+    """区分正常学习会话和不应推进计划进度的独立复习会话。"""
+
     LEARNING = "learning"
     REVIEW = "review"
 
 
 @dataclass(frozen=True, slots=True)
 class StudySession:
+    """一次学习或复习活动的不可变领域实体。
+
+    `kind` 决定完成会话时是否推进学习计划，`exercise_id` 允许复习和补救流程绑定动态
+    生成的题目；创建与完成方法通过返回新实例维护生命周期不变量。
+    """
+
     id: str
     goal_id: str
     plan_item_id: str

@@ -129,6 +129,8 @@ async def get_resource(
 async def delete_resource(
     resource_id: str, service: RagServiceDep, jobs: JobServiceDep
 ) -> Response:
+    """先取消资料的未完成后台任务，再删除索引和原始文件。"""
+
     await jobs.cancel_resource_jobs(resource_id)
     await service.delete(resource_id)
     return Response(status_code=204)

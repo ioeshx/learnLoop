@@ -92,6 +92,8 @@ class LearningTools:
     async def get_adaptive_recommendation(
         self, knowledge_node_id: str
     ) -> dict[str, object]:
+        """把领域难度建议转换为 LangGraph State 可序列化的 Tool 结果。"""
+
         recommendation = await GetAdaptiveRecommendation(self.dependencies).execute(
             knowledge_node_id
         )
@@ -255,6 +257,8 @@ class LearningTools:
         remediation_count: int,
         idempotency_key: str,
     ) -> dict[str, object]:
+        """调用补救题用例，并仅向 Agent 返回继续工作流所需的题目和难度字段。"""
+
         details = await CreateRemediationExercise(self.dependencies).execute(
             session_id,
             remediation_count=remediation_count,

@@ -270,24 +270,34 @@ class SubmitAttemptRequest(RequestModel):
 
 
 class CorrectAttemptRequest(RequestModel):
+    """作答纠正请求，只接受用于重新评分的新选项集合。"""
+
     selected_options: list[str] = Field(min_length=1)
 
 
 class StartReviewSessionRequest(RequestModel):
+    """复习会话创建请求，标识需要复习的知识点。"""
+
     knowledge_node_id: str = Field(min_length=1)
 
 
 class DeferReviewRequest(RequestModel):
+    """复习延期请求，将延期范围约束为 1 至 7 天。"""
+
     days: int = Field(default=1, ge=1, le=7)
 
 
 class PrerequisiteGapResponse(BaseModel):
+    """前置知识缺口响应，包含知识点身份、标题和当前掌握度。"""
+
     knowledge_node_id: str
     title: str
     score: float
 
 
 class AdaptiveRecommendationResponse(BaseModel):
+    """可解释自适应决策响应，供前端展示目标难度及其计算依据。"""
+
     mastery_score: float
     base_difficulty: float
     target_difficulty: float
@@ -298,6 +308,8 @@ class AdaptiveRecommendationResponse(BaseModel):
     def from_domain(
         cls, recommendation: AdaptiveRecommendation
     ) -> "AdaptiveRecommendationResponse":
+        """把不可变领域建议及嵌套前置缺口转换为 HTTP 响应模型。"""
+
         return cls(
             mastery_score=recommendation.mastery_score,
             base_difficulty=recommendation.base_difficulty,
@@ -315,12 +327,16 @@ class AdaptiveRecommendationResponse(BaseModel):
 
 
 class ReviewScheduleResponse(BaseModel):
+    """复习日程响应，用于延期等只更新计划时间的操作。"""
+
     knowledge_node_id: str
     due_at: datetime
     last_review_at: datetime | None
 
     @classmethod
     def from_domain(cls, schedule: ReviewSchedule) -> "ReviewScheduleResponse":
+        """从领域日程提取知识点、下次到期和上次复习时间。"""
+
         return cls(
             knowledge_node_id=schedule.knowledge_node_id,
             due_at=schedule.due_at,
@@ -514,6 +530,8 @@ class ResourceResponse(BaseModel):
 
 
 class BackgroundJobResponse(BaseModel):
+    """后台任务对外响应模型，隐藏内部租约所有者并暴露可观察的执行状态。"""
+
     id: str
     job_type: str
     payload: dict[str, JsonValue]
@@ -533,6 +551,8 @@ class BackgroundJobResponse(BaseModel):
 
     @classmethod
     def from_domain(cls, job: BackgroundJob) -> "BackgroundJobResponse":
+        """把内部任务快照映射为可 JSON 序列化且不泄露租约细节的响应。"""
+
         return cls(
             id=job.id,
             job_type=job.job_type.value,
@@ -554,16 +574,22 @@ class BackgroundJobResponse(BaseModel):
 
 
 class ResourceImportResponse(BaseModel):
+    """资料导入受理结果，同时返回资料元数据和负责处理它的后台任务。"""
+
     resource: ResourceResponse
     job: BackgroundJobResponse
 
 
 class WeeklyReportJobRequest(RequestModel):
+    """周报任务输入，可限定目标并约束统计窗口为 1 至 90 天。"""
+
     goal_id: str | None = Field(default=None, min_length=1)
     days: int = Field(default=7, ge=1, le=90)
 
 
 class DueReviewJobRequest(RequestModel):
+    """到期复习生成任务输入；空截止时间表示由服务使用当前时间。"""
+
     due_before: datetime | None = None
 
 

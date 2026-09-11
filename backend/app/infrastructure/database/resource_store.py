@@ -128,6 +128,8 @@ class SqliteResourceStore:
                 raise
 
     async def begin_processing(self, resource_id: str) -> None:
+        """把资料重置为处理中并清除旧错误，作为 Worker 每次处理尝试的起点。"""
+
         async with self._write_lock:
             try:
                 cursor = await self._connection.execute(

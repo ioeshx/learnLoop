@@ -280,6 +280,8 @@ class SqlAlchemyExerciseRepository:
         )
 
     async def update_attempt(self, attempt: ExerciseAttempt) -> None:
+        """定位作答 ORM 行并原地更新答案、分数和正确性。"""
+
         model = await self._session.get(ExerciseAttemptModel, attempt.id)
         if model is None:
             raise LookupError(f"exercise attempt {attempt.id} was not found")
@@ -353,6 +355,8 @@ class SqlAlchemyMasteryRepository:
     async def list_events(
         self, user_id: str, knowledge_node_id: str
     ) -> list[MasteryEvent]:
+        """按发生时间和 ID 查询事件，为确定性投影重放提供稳定顺序。"""
+
         result = await self._session.scalars(
             select(MasteryEventModel)
             .where(
@@ -364,6 +368,8 @@ class SqlAlchemyMasteryRepository:
         return [_mastery_event_from_model(model) for model in result]
 
     async def update_event(self, event: MasteryEvent) -> None:
+        """更新指定掌握度事件的类型和增量，不改变其顺序与关联作答。"""
+
         model = await self._session.get(MasteryEventModel, event.id)
         if model is None:
             raise LookupError(f"mastery event {event.id} was not found")
@@ -568,6 +574,8 @@ def _mastery_snapshot_from_model(model: MasterySnapshotModel) -> MasterySnapshot
 
 
 def _mastery_event_from_model(model: MasteryEventModel) -> MasteryEvent:
+    """把掌握度 ORM 行还原为领域事件，包含枚举和时区时间语义。"""
+
     return MasteryEvent(
         id=model.id,
         user_id=model.user_id,

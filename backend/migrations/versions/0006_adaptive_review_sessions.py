@@ -16,6 +16,8 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    """为会话添加学习/复习类型和动态练习外键，并建立类型约束。"""
+
     with op.batch_alter_table("study_sessions") as batch_op:
         batch_op.add_column(
             sa.Column(
@@ -39,6 +41,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """移除自适应复习会话增加的约束、外键和字段。"""
+
     with op.batch_alter_table("study_sessions") as batch_op:
         batch_op.drop_constraint("study_session_kind", type_="check")
         batch_op.drop_constraint(

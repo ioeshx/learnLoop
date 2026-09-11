@@ -50,7 +50,12 @@ def apply_mastery_event(
 
 
 def project_mastery(events: list[MasteryEvent]) -> MasterySnapshot | None:
-    """Rebuild the current projection after an event was corrected."""
+    """按时间和事件 ID 重放掌握度事件，重建可重复的当前快照。
+
+    作答被纠正后，历史增量可能变化，因此不能只修改现有分数；该函数从空状态依次应用
+    全部事件，确保快照、作答次数和正确次数与事件日志一致。
+    """
+
     snapshot: MasterySnapshot | None = None
     for event in sorted(events, key=lambda item: (item.occurred_at, item.id)):
         snapshot = apply_mastery_event(snapshot, event)

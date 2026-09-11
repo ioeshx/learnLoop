@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 class BackgroundWorker:
+    """轮询 SQLite 队列并通过租约、心跳和有界重试执行任务的 Worker。"""
+
     def __init__(
         self,
         *,
@@ -32,6 +34,8 @@ class BackgroundWorker:
         retry_max_seconds: float,
         worker_id: str | None = None,
     ) -> None:
+        """注入队列、Handler 和时间策略，并为当前进程生成唯一 Worker ID。"""
+
         self._store = store
         self._registry = registry
         self._clock = clock
@@ -43,6 +47,12 @@ class BackgroundWorker:
         self.worker_id = worker_id or f"learnloop-{uuid4()}"
 
     async def run_once(self) -> BackgroundJob | None:
+        """原子领取并执行一个到期任务。
+
+        执行期间启动心跳协程续租；成功时写入结果，取消或异常时根据错误类型和剩余
+        次数转入取消、重试或失败状态，最后返回数据库中的最新任务快照。
+        """
+
         async with self._store_lock:
             job = await self._store.claim_next(
                 worker_id=self.worker_id,
@@ -105,6 +115,8 @@ class BackgroundWorker:
         return await self._store.get(job.id)
 
     async def run_forever(self, stop: asyncio.Event | None = None) -> None:
+        """持续消费任务；队列为空时按轮询间隔等待，并响应停止事件优雅退出。"""
+
         stop_event = stop or asyncio.Event()
         logger.info("background worker started", extra={"worker_id": self.worker_id})
         while not stop_event.is_set():
@@ -119,12 +131,18 @@ class BackgroundWorker:
 
 
 class _WorkerJobContext(JobContext):
+    """单次任务的 Worker 上下文，把进度、心跳和取消检查绑定到同一租约。"""
+
     def __init__(self, worker: BackgroundWorker, job_id: str) -> None:
+        """记录执行该任务的 Worker，并假定初始租约有效。"""
+
         self._worker = worker
         self._job_id = job_id
         self._lease_valid = True
 
     async def keep_lease_alive(self) -> None:
+        """按租约时长的三分之一周期续租，续租失败后标记上下文失效。"""
+
         interval = max(self._worker._lease_seconds / 3, 1)
         while True:
             await asyncio.sleep(interval)
@@ -139,6 +157,8 @@ class _WorkerJobContext(JobContext):
                 return
 
     async def report_progress(self, progress: int, message: str) -> None:
+        """原子写入任务进度并顺带延长租约，失败时中断当前 Handler。"""
+
         async with self._worker._store_lock:
             updated = await self._worker._store.report_progress(
                 self._job_id,
@@ -152,6 +172,8 @@ class _WorkerJobContext(JobContext):
             raise JobCancelledError("job was cancelled or its lease was lost")
 
     async def raise_if_cancelled(self) -> None:
+        """查询取消标记和本地租约状态，在失去执行权时抛出协作式取消异常。"""
+
         async with self._worker._store_lock:
             cancelled = await self._worker._store.is_cancel_requested(
                 self._job_id, self._worker.worker_id

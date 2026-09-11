@@ -308,6 +308,12 @@ class DocumentChunkModel(Base):
 
 
 class BackgroundJobModel(Base):
+    """后台任务的 SQLAlchemy 表映射。
+
+    该持久化模型保存任务载荷、结果、进度、重试状态和 Worker 租约；检查约束保护状态机
+    基本不变量，领取/租约索引支持轮询，部分唯一索引实现同类型任务的幂等入队。
+    """
+
     __tablename__ = "background_jobs"
     __table_args__ = (
         CheckConstraint(

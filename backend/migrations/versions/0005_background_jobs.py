@@ -16,6 +16,8 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    """创建后台任务表、状态约束、领取/租约索引和部分幂等唯一索引。"""
+
     op.create_table(
         "background_jobs",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -76,9 +78,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """按依赖顺序移除后台任务索引和数据表。"""
+
     op.execute("DROP INDEX IF EXISTS uq_background_jobs_type_idempotency")
     op.drop_index("ix_background_jobs_type_created", table_name="background_jobs")
     op.drop_index("ix_background_jobs_lease", table_name="background_jobs")
     op.drop_index("ix_background_jobs_claim", table_name="background_jobs")
     op.drop_table("background_jobs")
-

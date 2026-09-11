@@ -10,17 +10,8 @@ from app.domain.mastery import AdaptiveRecommendation
 
 
 class ReviewExerciseGenerator(Protocol):
-    async def generate(
-        self,
-        goal: LearningGoal,
-        node: KnowledgeNode,
-        recommendation: AdaptiveRecommendation,
-        *,
-        now: datetime,
-    ) -> Exercise: ...
+    """自适应复习题生成端口，允许固定规则和 LLM 实现互换。"""
 
-
-class FixedReviewExerciseGenerator:
     async def generate(
         self,
         goal: LearningGoal,
@@ -29,6 +20,23 @@ class FixedReviewExerciseGenerator:
         *,
         now: datetime,
     ) -> Exercise:
+        """依据目标、知识点和难度建议生成可客观评分的复习题。"""
+        ...
+
+
+class FixedReviewExerciseGenerator:
+    """无需模型的确定性复习题生成器，作为离线模式和模型失败回退。"""
+
+    async def generate(
+        self,
+        goal: LearningGoal,
+        node: KnowledgeNode,
+        recommendation: AdaptiveRecommendation,
+        *,
+        now: datetime,
+    ) -> Exercise:
+        """把知识点描述作为正确项构造选择题，并在题干中展示自适应原因。"""
+
         del goal
         reason = recommendation.reasons[0]
         return Exercise.create_multiple_choice(

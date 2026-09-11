@@ -16,12 +16,18 @@ from app.workers.registry import JobContext, PermanentJobError
 
 
 class ResourceProcessingHandler:
+    """在 Worker 中解析、切块并索引已准备好的本地学习资料。"""
+
     def __init__(self, rag_service: RagService) -> None:
+        """复用 RAG 服务完成处理，并保持文件存储实现与 Handler 解耦。"""
+
         self._rag_service = rag_service
 
     async def __call__(
         self, job: BackgroundJob, context: JobContext
     ) -> dict[str, Any]:
+        """校验任务载荷、执行资料处理，并把确定性输入错误标记为不可重试。"""
+
         resource_id = _required_string(job.payload, "resource_id")
         try:
             resource = await self._rag_service.process_resource(
@@ -37,15 +43,21 @@ class ResourceProcessingHandler:
 
 
 class WeeklyReportHandler:
+    """聚合指定时间窗口内的会话、练习、掌握度和到期复习统计。"""
+
     def __init__(
         self, database_path: Path, clock: Callable[[], datetime]
     ) -> None:
+        """保存业务数据库路径和可测试时钟，报告计算不依赖 API 进程状态。"""
+
         self._database_path = database_path
         self._clock = clock
 
     async def __call__(
         self, job: BackgroundJob, context: JobContext
     ) -> dict[str, Any]:
+        """用只读聚合 SQL 生成周报，并在各统计阶段持久化进度。"""
+
         user_id = _optional_string(job.payload, "user_id") or DEFAULT_USER_ID
         goal_id = _optional_string(job.payload, "goal_id")
         days = job.payload.get("days", 7)
@@ -149,12 +161,18 @@ class WeeklyReportHandler:
 
 
 class DueReviewGenerationHandler:
+    """计算截止时间前的复习队列，并生成可供通知或展示的任务快照。"""
+
     def __init__(self, dependencies: ApplicationDependencies) -> None:
+        """注入应用依赖，使后台计算与同步到期复习接口复用同一业务规则。"""
+
         self._dependencies = dependencies
 
     async def __call__(
         self, job: BackgroundJob, context: JobContext
     ) -> dict[str, Any]:
+        """解析带时区的截止时间，查询复习项并逐项报告生成进度。"""
+
         due_before_value = _required_string(job.payload, "due_before")
         try:
             due_before = datetime.fromisoformat(due_before_value)
@@ -191,6 +209,8 @@ class DueReviewGenerationHandler:
 
 
 def _required_string(payload: dict[str, Any], key: str) -> str:
+    """读取并规范化必填字符串载荷，格式错误时禁止无意义重试。"""
+
     value = payload.get(key)
     if not isinstance(value, str) or not value.strip():
         raise PermanentJobError(f"job payload requires non-empty {key}")
@@ -198,6 +218,8 @@ def _required_string(payload: dict[str, Any], key: str) -> str:
 
 
 def _optional_string(payload: dict[str, Any], key: str) -> str | None:
+    """读取可选字符串载荷；提供了空值或错误类型时判定任务不可执行。"""
+
     value = payload.get(key)
     if value is None:
         return None

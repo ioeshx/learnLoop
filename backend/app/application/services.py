@@ -152,6 +152,8 @@ async def _get_session_details(
 async def _get_adaptive_recommendation(
     uow: UnitOfWork, node: KnowledgeNode
 ) -> AdaptiveRecommendation:
+    """加载当前知识点及其前置节点掌握度，并调用纯领域规则生成建议。"""
+
     snapshot = await uow.mastery.get_snapshot(DEFAULT_USER_ID, node.id)
     node_by_id = {
         candidate.id: candidate
@@ -671,12 +673,20 @@ class StartStudySession:
 
 
 class StartReviewSession:
-    """Create an adaptive review exercise and bind it to a review session."""
+    """为已到期知识点生成自适应题目，并创建不推进学习计划的复习会话。"""
 
     def __init__(self, dependencies: ApplicationDependencies) -> None:
+        """注入事务工厂、时钟和可选的复习题生成器。"""
+
         self._dependencies = dependencies
 
     async def execute(self, command: StartReviewSessionCommand) -> SessionDetails:
+        """校验到期日程、计算难度、生成题目并原子绑定复习会话。
+
+        会话 ID 由知识点和幂等键确定；耗时题目生成在数据库事务外执行，随后再次检查
+        会话避免并发重复，最终持久化练习和 `REVIEW` 类型会话。
+        """
+
         now = self._dependencies.clock()
         session_id = deterministic_id(
             f"review-session:{command.knowledge_node_id}", command.idempotency_key
@@ -761,10 +771,16 @@ class GetMasteryState:
 
 
 class GetAdaptiveRecommendation:
+    """查询指定知识点的当前可解释难度建议。"""
+
     def __init__(self, dependencies: ApplicationDependencies) -> None:
+        """保存应用依赖，以便在读取事务中加载掌握度和知识图。"""
+
         self._dependencies = dependencies
 
     async def execute(self, knowledge_node_id: str) -> AdaptiveRecommendation:
+        """验证知识点存在后，聚合前置掌握度并返回确定性建议。"""
+
         async with self._dependencies.uow_factory() as uow:
             node = await uow.knowledge.get_node(knowledge_node_id)
             if node is None:
@@ -773,9 +789,11 @@ class GetAdaptiveRecommendation:
 
 
 class CreateRemediationExercise:
-    """Generate a simpler exercise after a diagnosed wrong answer."""
+    """在错因诊断后生成更简单的补救题，并替换会话当前练习。"""
 
     def __init__(self, dependencies: ApplicationDependencies) -> None:
+        """注入事务、时钟和可选生成器，模型不可用时仍可使用固定题。"""
+
         self._dependencies = dependencies
 
     async def execute(
@@ -785,6 +803,12 @@ class CreateRemediationExercise:
         remediation_count: int,
         idempotency_key: str,
     ) -> SessionDetails:
+        """按补救次数降低目标难度，并以确定性 ID 幂等创建新练习。
+
+        方法先读取会话上下文并计算建议，在事务外生成题目，再次进入事务处理并发创建，
+        将会话绑定到补救题后返回包含最新自适应信息的完整会话视图。
+        """
+
         if not 1 <= remediation_count <= 2:
             raise ValueError("remediation count must be 1 or 2")
         now = self._dependencies.clock()
@@ -991,12 +1015,20 @@ class SubmitExerciseAttempt:
 
 
 class CorrectExerciseAttempt:
-    """Replace a persisted answer and rebuild its mastery projection."""
+    """纠正已持久化答案，并从事件日志重建掌握度投影。"""
 
     def __init__(self, dependencies: ApplicationDependencies) -> None:
+        """保存事务依赖，使作答、事件和快照能在同一事务中修正。"""
+
         self._dependencies = dependencies
 
     async def execute(self, command: CorrectAttemptCommand) -> AttemptResult:
+        """重新评分作答、替换对应掌握度事件并重放所有事件。
+
+        方法保持原作答时间和 ID，依据纠正结果重算事件类型与增量，再按时间重建快照；
+        作答、事件和快照一起提交，避免部分更新造成学习状态不一致。
+        """
+
         async with self._dependencies.uow_factory() as uow:
             session = await uow.sessions.get(command.session_id)
             if session is None:
@@ -1067,6 +1099,8 @@ class CorrectExerciseAttempt:
 async def _existing_attempt_result(
     uow: UnitOfWork, attempt: ExerciseAttempt, exercise: Exercise
 ) -> AttemptResult:
+    """为幂等重复提交读取已存在作答及配套掌握度、复习日程。"""
+
     mastery = await uow.mastery.get_snapshot(
         DEFAULT_USER_ID, exercise.knowledge_node_id
     )
@@ -1151,12 +1185,18 @@ class GetDueReviews:
 
 
 class DeferReview:
+    """在安全范围内延期一个知识点的复习日程。"""
+
     def __init__(self, dependencies: ApplicationDependencies) -> None:
+        """注入事务和时钟，确保延期基于服务当前时间而非客户端时间。"""
+
         self._dependencies = dependencies
 
     async def execute(
         self, knowledge_node_id: str, *, days: int = 1
     ) -> ReviewSchedule:
+        """将复习日期推迟 1 至 7 天并原子保存，超出范围时拒绝请求。"""
+
         if not 1 <= days <= 7:
             raise ValueError("review may be deferred by 1 to 7 days")
         now = self._dependencies.clock()
