@@ -44,7 +44,11 @@ class LlmCurriculumGenerator:
             raise CurriculumGenerationError(
                 "The model could not produce a domain-valid curriculum. Please retry."
             ) from error
-
+    # 1. user inputr -> goal
+    # 2. goal ->knowledge graph, nodes, edges, validate graph
+    # 3. goal, graph -> study plan(every node)
+    # 4. study plan(every node) -> lesson content, exercise proposal(every node)
+    # 5. return curriculum(nodes with lesson content, edges, study plan, exercises)
     async def _generate_validated(
         self, goal: LearningGoal, *, now: datetime
     ) -> Curriculum:

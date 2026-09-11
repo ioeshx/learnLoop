@@ -97,6 +97,7 @@ class DeepSeekModelProvider:
 
         for attempt in range(self._max_retries + 1):
             try:
+                # async request to DeepSeek API
                 response = await self._client.post(
                     "/chat/completions", json=payload, headers=self._headers
                 )
@@ -109,7 +110,7 @@ class DeepSeekModelProvider:
                     ) from error
                 await self._sleep(_retry_delay(attempt))
                 continue
-
+            # if retrable status code, retry if attempts remain, else raise error
             if response.status_code in RETRYABLE_STATUS_CODES:
                 if attempt < self._max_retries:
                     await self._sleep(_retry_delay(attempt))
@@ -120,6 +121,7 @@ class DeepSeekModelProvider:
                     retryable=True,
                     status_code=response.status_code,
                 )
+            # if non-retriable error, raise error
             if response.is_error:
                 raise ModelProviderError(
                     f"DeepSeek returned HTTP {response.status_code}: "
@@ -128,7 +130,7 @@ class DeepSeekModelProvider:
                     retryable=False,
                     status_code=response.status_code,
                 )
-
+            # try to parse the response JSON into our model, raise error if invalid
             try:
                 parsed = _DeepSeekResponse.model_validate(response.json())
             except ValueError as error:
@@ -138,6 +140,7 @@ class DeepSeekModelProvider:
                     retryable=False,
                     status_code=response.status_code,
                 ) from error
+            # token usage tracking and return the model response
             usage = TokenUsage(
                 input_tokens=parsed.usage.prompt_tokens,
                 output_tokens=parsed.usage.completion_tokens,

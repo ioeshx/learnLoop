@@ -111,7 +111,7 @@ class StructuredModel:
                 content=(
                     f"{rendered.system}\n\n"
                     "输出必须是一个 JSON 对象，不要使用 Markdown 代码块。"
-                    f"JSON Schema：{schema_json}"
+                    f"JSON Schema:{schema_json}"
                 ),
             ),
             ModelMessage(role="user", content=rendered.user),
@@ -133,6 +133,7 @@ class StructuredModel:
                     prompt_version=prompt.version,
                     messages=(
                         *messages,
+                        # hard limit(8000) to avoid token explosion
                         ModelMessage(role="assistant", content=first.content[:8_000]),
                         ModelMessage(
                             role="user",

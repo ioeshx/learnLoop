@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -371,7 +371,7 @@ async def open_agent_runtime(
     settings: Settings,
     dependencies: ApplicationDependencies,
     model: StructuredModel | None,
-) -> AsyncIterator[AgentRuntime]:
+) -> AsyncGenerator[AgentRuntime, None]:
     settings.ensure_runtime_directories()
     async with AsyncSqliteSaver.from_conn_string(
         settings.checkpoint_path.as_posix()

@@ -43,6 +43,7 @@ class LocalHashEmbeddingProvider:
     async def embed_query(self, text: str) -> list[float]:
         return self._embed(text)
 
+    # feature hashing implementation
     def _embed(self, text: str) -> list[float]:
         vector = np.zeros(self._dimensions, dtype=np.float64)
         features = _text_features(text)

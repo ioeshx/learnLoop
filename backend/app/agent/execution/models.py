@@ -52,6 +52,11 @@ class ModelCallTrace:
     created_at: datetime
 
 
+# run_id       LearnLoop 暴露给 API 和前端的运行 ID
+# thread_id    LangGraph Checkpoint 线程 ID
+# graph_kind   daily_learning 或 goal_planning
+# resource_id  session_id 或 goal_id
+# status       当前生命周期状态
 @dataclass(frozen=True, slots=True)
 class AgentRun:
     run_id: str

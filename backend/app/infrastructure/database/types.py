@@ -6,7 +6,7 @@ from sqlalchemy import DateTime
 from sqlalchemy.engine.interfaces import Dialect
 from sqlalchemy.types import TypeDecorator
 
-
+# convert timezone-aware datetimes to naive UTC for SQLite, and back again
 class UTCDateTime(TypeDecorator[datetime]):
     """Persist UTC as naive SQLite values and restore timezone awareness."""
 
