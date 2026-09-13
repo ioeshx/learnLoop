@@ -64,6 +64,8 @@ class BackgroundWorker:
         context = _WorkerJobContext(self, job.id)
         heartbeat = asyncio.create_task(context.keep_lease_alive())
         try:
+            # two cancellation checks: one before and one after the handler call, to avoid
+            # the case where the handler is very fast and the job is cancelled before the first check
             handler = self._registry.handler_for(job.job_type)
             await context.raise_if_cancelled()
             result = await handler(job, context)
