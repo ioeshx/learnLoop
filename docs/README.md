@@ -8,6 +8,11 @@
 - `architecture/background-jobs.md`：阶段八的 SQLite 队列、租约、重试和 Worker。
 - `architecture/adaptive-review.md`：阶段九的掌握度投影、自适应难度、FSRS 队列和补救路径。
 - `architecture/evaluation-observability.md`：阶段十的 Trace、离线评测、学习洞察、PWA 与数据备份。
+- `agent/research-and-industry-directions.md`：高级 Agent 研究与工业实践的主要技术方向、定义和局限。
+- `agent/learnloop-application-design.md`：Planning、Tool Use、Context、Memory、Agentic RAG 和 Multi-agent 在 LearnLoop 中的应用设计。
+- `agent/phase-two-roadmap.md`：LearnLoop 第二阶段从动态单 Agent 到 Agentic RL 的分阶段路线图与验收标准。
+- `agent/phase-two-implementation-plan.md`：第二阶段各里程碑的代码范围、数据迁移、测试门禁和首批可执行 Backlog。
+- `agent/paper-reading-list.md`：按实现依赖组织的 Agent 论文、工业实践和阅读练习。
 - `architecture/`：系统、Agent、数据和运行时架构。
 - `adr/`：Architecture Decision Records。
 - `api/`：HTTP、SSE 和内部接口约定。
