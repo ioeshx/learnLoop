@@ -1,19 +1,22 @@
 """Durable LangGraph runtime with normalized replayable events."""
 
+from __future__ import annotations
+
 import asyncio
+import json
 import logging
-from collections.abc import AsyncIterator, AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
-from app.agent.execution.models import AgentEvent, AgentRun, GraphKind
+from app.agent.execution.models import AgentEvent, AgentRun, EngineVersion, GraphKind
 from app.agent.execution.store import SqliteAgentRunStore
 from app.agent.graphs import (
     DailyLearningContext,
@@ -27,6 +30,9 @@ from app.application import ApplicationDependencies
 from app.config import Settings
 from app.infrastructure.llm import StructuredModel
 from app.observability import bind_agent_run, reset_agent_run
+
+if TYPE_CHECKING:
+    from app.agent.dynamic.kernel import DynamicAgentKernel
 
 _INITIAL = object()
 logger = logging.getLogger(__name__)
@@ -51,23 +57,72 @@ class AgentRuntime:
     tools: LearningTools
     model: StructuredModel | None
     retention_days: int
+    dynamic_kernel: DynamicAgentKernel | None
     _tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
+    _task_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def create_run(
-        self, graph_kind: GraphKind, resource_id: str
+        self,
+        graph_kind: GraphKind,
+        resource_id: str,
+        *,
+        engine_version: EngineVersion = "fixed_v1",
+        parent_run_id: str | None = None,
     ) -> tuple[AgentRun, bool]:
-        return await self.run_store.create_or_get(graph_kind, resource_id)
+        if engine_version == "dynamic_v2" and self.dynamic_kernel is None:
+            raise RuntimeError("dynamic_v2 requires an enabled LLM provider")
+        return await self.run_store.create_or_get(
+            graph_kind,
+            resource_id,
+            engine_version=engine_version,
+            parent_run_id=parent_run_id,
+        )
 
     async def execute(
         self, run: AgentRun, *, resume: object = _INITIAL
     ) -> AsyncIterator[AgentEvent]:
         resumed = resume is not _INITIAL
+        if run.engine_version == "dynamic_v2":
+            if self.dynamic_kernel is None:
+                raise RuntimeError("dynamic_v2 requires an enabled LLM provider")
+            run_token = bind_agent_run(run.run_id)
+            try:
+                async for event in self.dynamic_kernel.execute(
+                    run, resume=resume if resumed else None
+                ):
+                    yield event
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                refreshed = await self.run_store.get(run.run_id)
+                if refreshed is not None and refreshed.status not in {
+                    "completed",
+                    "failed",
+                    "cancelled",
+                }:
+                    await self.run_store.set_status(
+                        run.run_id, "failed", terminal_reason="failed"
+                    )
+                    yield await self.run_store.append_event(
+                        run.run_id,
+                        "run_failed",
+                        data={
+                            "terminal_reason": "failed",
+                            "message": str(error),
+                            "error_type": type(error).__name__,
+                        },
+                    )
+                logger.exception("dynamic_agent_run_failed")
+            finally:
+                reset_agent_run(run_token)
+            return
         await self.run_store.set_status(run.run_id, "running")
         yield await self.run_store.append_event(
             run.run_id,
             "run_started",
             data={
                 "graph": run.graph_kind,
+                "engine_version": run.engine_version,
                 "thread_id": run.thread_id,
                 "resumed": resumed,
             },
@@ -188,16 +243,25 @@ class AgentRuntime:
     async def start_execution(
         self, run: AgentRun, *, resume: object = _INITIAL
     ) -> None:
-        current = self._tasks.get(run.run_id)
-        if current is not None and not current.done():
-            raise RuntimeError(f"agent run {run.run_id} is already executing")
-        await self.run_store.set_status(run.run_id, "running")
-        task = asyncio.create_task(
-            self._consume_execution(run, resume=resume),
-            name=f"learnloop-agent-{run.run_id}",
-        )
-        self._tasks[run.run_id] = task
-        task.add_done_callback(self._discard_task)
+        # 进程内 Lock 与持久化状态校验共同阻止两个 concurrent resume 同时启动。
+        async with self._task_lock:
+            current = self._tasks.get(run.run_id)
+            if current is not None and not current.done():
+                raise RuntimeError(f"agent run {run.run_id} is already executing")
+            refreshed = await self.run_store.get(run.run_id)
+            if refreshed is None:
+                raise LookupError(f"agent run {run.run_id} was not found")
+            if resume is not _INITIAL and refreshed.status != "awaiting_input":
+                raise RuntimeError("agent run is not awaiting input")
+            await self.run_store.set_status(
+                run.run_id, "running", expected_version=refreshed.version
+            )
+            task = asyncio.create_task(
+                self._consume_execution(run, resume=resume),
+                name=f"learnloop-agent-{run.run_id}",
+            )
+            self._tasks[run.run_id] = task
+            task.add_done_callback(self._discard_task)
 
     async def _consume_execution(
         self, run: AgentRun, *, resume: object
@@ -330,6 +394,15 @@ class AgentRuntime:
         return len(candidates)
 
     async def get_checkpoint_state(self, run: AgentRun) -> dict[str, object]:
+        if run.engine_version == "dynamic_v2":
+            stored = await self.run_store.load_dynamic_state(run.run_id)
+            return {
+                "run_id": run.run_id,
+                "thread_id": run.thread_id,
+                "values": json.loads(stored) if stored is not None else {},
+                "next": [],
+                "interrupts": [],
+            }
         graph = (
             self.daily_graph
             if run.graph_kind == "daily_learning"
@@ -357,6 +430,35 @@ class AgentRuntime:
         await self.checkpointer.adelete_thread(run.thread_id)
         await self.run_store.delete(run.run_id)
 
+    async def cancel_run(self, run: AgentRun) -> AgentRun:
+        """持久化 cancel signal，并对 fixed_v1 执行进程内取消。
+
+        dynamic_v2 在每轮边界 cooperative polling；fixed_v1 没有通用 Loop，因此需要
+        取消当前 asyncio Task。无活动 Task（例如 awaiting_input）可立即进入 cancelled。
+        """
+
+        requested = await self.run_store.request_cancel(run.run_id)
+        task = self._tasks.get(run.run_id)
+        if run.engine_version == "fixed_v1" and task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            cancelled = await self.run_store.set_status(
+                run.run_id, "cancelled", terminal_reason="cancelled"
+            )
+            await self.run_store.append_event(
+                run.run_id, "run_cancelled", data={"terminal_reason": "cancelled"}
+            )
+            return cancelled
+        if task is None or task.done():
+            cancelled = await self.run_store.set_status(
+                run.run_id, "cancelled", terminal_reason="cancelled"
+            )
+            await self.run_store.append_event(
+                run.run_id, "run_cancelled", data={"terminal_reason": "cancelled"}
+            )
+            return cancelled
+        return requested
+
     async def shutdown(self) -> None:
         tasks = list(self._tasks.values())
         for task in tasks:
@@ -372,7 +474,17 @@ async def open_agent_runtime(
     dependencies: ApplicationDependencies,
     model: StructuredModel | None,
 ) -> AsyncGenerator[AgentRuntime, None]:
+    # Local imports keep the execution package importable by dynamic submodules without
+    # creating a runtime ↔ kernel circular import.
+    from app.agent.dynamic.context import MinimalContextCompiler
+    from app.agent.dynamic.kernel import DynamicAgentKernel
+    from app.agent.dynamic.models import RunBudget
+    from app.agent.dynamic.policy import ModelAgentPolicy
+    from app.agent.dynamic.tools import ToolExecutor, build_learning_tool_registry
+    from app.agent.dynamic.verifier import DeterministicVerifier
+
     settings.ensure_runtime_directories()
+    learning_tools = LearningTools(dependencies)
     async with AsyncSqliteSaver.from_conn_string(
         settings.checkpoint_path.as_posix()
     ) as checkpointer:
@@ -383,9 +495,35 @@ async def open_agent_runtime(
             run_store=run_store,
             daily_graph=build_daily_learning_graph(checkpointer),
             goal_graph=build_goal_planning_graph(checkpointer),
-            tools=LearningTools(dependencies),
+            tools=learning_tools,
             model=model,
             retention_days=settings.checkpoint_retention_days,
+            dynamic_kernel=(
+                DynamicAgentKernel(
+                    store=run_store,
+                    policy=ModelAgentPolicy(model),
+                    tools=ToolExecutor(build_learning_tool_registry(learning_tools)),
+                    context=MinimalContextCompiler(
+                        max_context_tokens=settings.agent_context_tokens
+                    ),
+                    verifier=DeterministicVerifier(),
+                    budget=RunBudget(
+                        max_steps=settings.agent_max_steps,
+                        max_model_calls=settings.agent_max_model_calls,
+                        max_tool_calls=settings.agent_max_tool_calls,
+                        max_input_tokens=settings.agent_max_input_tokens,
+                        max_output_tokens=settings.agent_max_output_tokens,
+                        max_total_tokens=settings.agent_max_total_tokens,
+                        deadline_seconds=settings.agent_deadline_seconds,
+                        max_same_action=settings.agent_max_same_action,
+                        max_consecutive_failures=settings.agent_max_consecutive_failures,
+                        max_replans=settings.agent_max_replans,
+                    ),
+                    allow_write_tools=settings.agent_dynamic_writes_enabled,
+                )
+                if model is not None
+                else None
+            ),
         )
         if model is not None:
             model.set_observer(run_store.record_model_call)

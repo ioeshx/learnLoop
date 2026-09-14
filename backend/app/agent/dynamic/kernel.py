@@ -1,0 +1,889 @@
+"""Bounded observe-decide-act-verify loop for the LearnLoop v2 Agent."""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
+from uuid import uuid4
+
+from app.agent.dynamic.budget import BudgetLedger
+from app.agent.dynamic.context import MinimalContextCompiler
+from app.agent.dynamic.models import (
+    ActionType,
+    AgentAction,
+    AgentInterrupt,
+    AgentPlan,
+    BudgetUsage,
+    DynamicAgentState,
+    Observation,
+    PlanStep,
+    RunBudget,
+    StepStatus,
+    ToolErrorKind,
+    ToolResult,
+    ToolSpec,
+    VerificationStatus,
+)
+from app.agent.dynamic.policy import AgentPolicy
+from app.agent.dynamic.tools import ToolExecutor
+from app.agent.dynamic.verifier import DeterministicVerifier, apply_replan
+from app.agent.execution.models import AgentEvent, AgentRun
+from app.agent.execution.store import SqliteAgentRunStore
+
+
+class DynamicAgentKernel:
+    """运行受控的 ``observe → decide → act → verify → replan`` state machine。
+
+    这个类刻意不使用自由形式的 autonomous loop。每轮最多执行一个公开 Action，所有
+    Side Effect 必须通过 ToolExecutor，Step 完成必须通过 Verifier，循环继续之前会持久化
+    durable state。由此可以在 crash/restart 后 resume，也可以完整回放每个公开决策。
+    """
+
+    def __init__(
+        self,
+        *,
+        store: SqliteAgentRunStore,
+        policy: AgentPolicy,
+        tools: ToolExecutor,
+        context: MinimalContextCompiler,
+        verifier: DeterministicVerifier,
+        budget: RunBudget,
+        allow_write_tools: bool = False,
+    ) -> None:
+        self.store = store
+        self.policy = policy
+        self.tools = tools
+        self.context = context
+        self.verifier = verifier
+        self.default_budget = budget
+        self.allow_write_tools = allow_write_tools
+
+    async def execute(
+        self, run: AgentRun, *, resume: object | None = None
+    ) -> AsyncIterator[AgentEvent]:
+        if run.graph_kind != "daily_learning":
+            raise ValueError("dynamic_v2 currently supports daily_learning only")
+        await self.store.set_status(run.run_id, "running")
+        yield await self.store.append_event(
+            run.run_id,
+            "run_started",
+            data={
+                "graph": run.graph_kind,
+                "engine_version": run.engine_version,
+                "attempt_no": run.attempt_no,
+                "resumed": resume is not None,
+            },
+        )
+
+        state = await self._load_or_initialize(run)
+        if state is None:
+            refreshed = await self.store.get(run.run_id)
+            if refreshed is not None and refreshed.status == "failed":
+                return
+            raise RuntimeError("dynamic Agent initialization failed")
+        if resume is not None:
+            state, resume_event = self._apply_resume(state, resume)
+            await self._save(state)
+            yield await self.store.append_event(
+                run.run_id,
+                "observation_recorded",
+                node=resume_event.plan_step_id,
+                data=_observation_trace(resume_event),
+            )
+
+        while True:
+            refreshed = await self.store.get(run.run_id)
+            if refreshed is None:
+                raise LookupError(f"agent run {run.run_id} was not found")
+            if refreshed.cancel_requested:
+                await self._save(state)
+                yield await self._terminate(run.run_id, "cancelled")
+                return
+
+            ledger = BudgetLedger(state.budget, state.usage)
+            budget_check = ledger.preflight("model")
+            if not budget_check.allowed:
+                await self._save(state)
+                yield await self._terminate(
+                    run.run_id,
+                    budget_check.terminal_reason or "budget_exhausted",
+                    budget_check.detail,
+                )
+                return
+
+            step = state.plan.ready_step()
+            if step is None:
+                if state.plan.complete:
+                    yield await self._terminate(
+                        run.run_id, "completed", state.final_summary
+                    )
+                else:
+                    yield await self._terminate(
+                        run.run_id,
+                        "verification_failed",
+                        "Plan has no ready Step but is not complete",
+                    )
+                return
+
+            state = state.model_copy(
+                update={
+                    "plan": _activate_step(state.plan, step.id),
+                    "usage": ledger.record_step(),
+                }
+            )
+            step = _step_by_id(state.plan, step.id)
+            tool_specs = self._allowed_specs(step)
+            context = self.context.compile(state, step, tool_specs)
+            yield await self.store.append_event(
+                run.run_id,
+                "context_compiled",
+                node=step.id,
+                data={
+                    "estimated_tokens": context.estimated_tokens,
+                    "source_ids": list(context.source_ids),
+                    "truncated_observations": context.truncated_observations,
+                    "tool_names": [tool.name for tool in tool_specs],
+                },
+            )
+            decision = await self.policy.decide(context)
+            token_decision = ledger.record_model(decision.usage)
+            state = state.model_copy(update={"usage": ledger.usage})
+            if not token_decision.allowed:
+                await self._save(state)
+                yield await self._budget_event(state)
+                yield await self._terminate(
+                    run.run_id,
+                    token_decision.terminal_reason or "budget_exhausted",
+                    token_decision.detail,
+                )
+                return
+
+            action = decision.value
+            action_id = str(uuid4())
+            rejection = self._validate_action(action, step)
+            if rejection is not None:
+                state = _record_failure(state)
+                await self._save(state)
+                yield await self.store.append_event(
+                    run.run_id,
+                    "action_rejected",
+                    node=step.id,
+                    data={"action_id": action_id, "reason": rejection},
+                )
+                if state.consecutive_failures >= state.budget.max_consecutive_failures:
+                    yield await self._terminate(
+                        run.run_id, "verification_failed", rejection
+                    )
+                    return
+                continue
+
+            state, repeated = _record_action_signature(state, action)
+            yield await self.store.append_event(
+                run.run_id,
+                "action_decided",
+                node=step.id,
+                data={"action_id": action_id, **_action_trace(action)},
+            )
+            if repeated > state.budget.max_same_action:
+                state = _record_failure(state)
+                await self._save(state)
+                yield await self.store.append_event(
+                    run.run_id,
+                    "action_rejected",
+                    node=step.id,
+                    data={
+                        "action_id": action_id,
+                        "reason": "equivalent action repetition limit exceeded",
+                    },
+                )
+                yield await self._terminate(
+                    run.run_id,
+                    "verification_failed",
+                    "equivalent action repetition limit exceeded",
+                )
+                return
+
+            if action.action == ActionType.CALL_TOOL:
+                before_tool = await self.store.get(run.run_id)
+                if before_tool is not None and before_tool.cancel_requested:
+                    await self._save(state)
+                    yield await self._terminate(run.run_id, "cancelled")
+                    return
+                async for event in self._execute_tool_action(
+                    run, state, step, action, action_id
+                ):
+                    yield event
+                loaded = await self.store.load_dynamic_state(run.run_id)
+                if loaded is None:
+                    raise RuntimeError("dynamic state disappeared after Tool execution")
+                state = DynamicAgentState.model_validate_json(loaded)
+                current_run = await self.store.get(run.run_id)
+                if current_run is not None and current_run.status in {
+                    "completed",
+                    "failed",
+                    "cancelled",
+                }:
+                    return
+                latest = state.observations[-1]
+                should_replan = (
+                    not latest.succeeded
+                    and latest.error_kind
+                    not in {ToolErrorKind.TRANSIENT, ToolErrorKind.TIMEOUT}
+                ) or (
+                    state.consecutive_failures
+                    >= state.budget.max_consecutive_failures
+                )
+                if should_replan:
+                    replanned = await self._try_replan(run, state)
+                    if replanned is None:
+                        yield await self._terminate(
+                            run.run_id,
+                            "verification_failed",
+                            "Tool failures exhausted the Replanner",
+                        )
+                        return
+                    state, replan_event, budget_event = replanned
+                    yield budget_event
+                    yield replan_event
+                continue
+
+            if action.action == ActionType.PRESENT_CONTENT:
+                observation = Observation(
+                    action_id=action_id,
+                    plan_step_id=step.id,
+                    source="agent.content",
+                    succeeded=True,
+                    summary="Content was presented to the learner.",
+                    data={"content": action.content},
+                )
+                state = _append_observation(state, observation, succeeded=True)
+                await self._save(state)
+                yield await self.store.append_event(
+                    run.run_id,
+                    "content_presented",
+                    node=step.id,
+                    data={
+                        "action_id": action_id,
+                        "observation_id": observation.id,
+                        "content": action.content,
+                    },
+                )
+                continue
+
+            if action.action == ActionType.REQUEST_INPUT:
+                interrupt = AgentInterrupt(
+                    type=action.input_type or "clarification",
+                    prompt=action.content or "请提供继续所需的信息。",
+                    plan_step_id=step.id,
+                    allowed_actions=(
+                        ["accept", "reject"]
+                        if action.input_type == "approval"
+                        else []
+                    ),
+                )
+                state = state.model_copy(update={"pending_interrupt": interrupt})
+                await self._save(state)
+                await self.store.set_status(run.run_id, "awaiting_input")
+                yield await self.store.append_event(
+                    run.run_id,
+                    "interrupt_created",
+                    node=step.id,
+                    data={
+                        "interrupt_id": interrupt.id,
+                        "value": interrupt.model_dump(mode="json"),
+                    },
+                )
+                yield await self.store.append_event(
+                    run.run_id,
+                    "run_paused",
+                    node=step.id,
+                    data={"reason": interrupt.type},
+                )
+                return
+
+            if action.action == ActionType.COMPLETE_STEP:
+                verification = self.verifier.verify_step(
+                    step, action.evidence_ids, state.observations
+                )
+                yield await self.store.append_event(
+                    run.run_id,
+                    "verification_completed",
+                    node=step.id,
+                    data=verification.model_dump(mode="json"),
+                )
+                if verification.status == VerificationStatus.PASSED:
+                    state = state.model_copy(
+                        update={
+                            "plan": _complete_step(
+                                state.plan, step.id, verification.evidence_ids
+                            ),
+                            "consecutive_failures": 0,
+                        }
+                    )
+                else:
+                    state = _record_failure(state)
+                await self._save(state)
+                continue
+
+            if action.action == ActionType.FINISH_RUN:
+                final = self.verifier.verify_plan(state.plan)
+                yield await self.store.append_event(
+                    run.run_id,
+                    "verification_completed",
+                    data=final.model_dump(mode="json"),
+                )
+                if final.status == VerificationStatus.PASSED:
+                    state = state.model_copy(update={"final_summary": action.content})
+                    await self._save(state)
+                    yield await self._terminate(run.run_id, "completed", action.content)
+                    return
+                state = _record_failure(state)
+                await self._save(state)
+
+    async def _load_or_initialize(self, run: AgentRun) -> DynamicAgentState | None:
+        stored = await self.store.load_dynamic_state(run.run_id)
+        if stored is not None:
+            return DynamicAgentState.model_validate_json(stored)
+
+        usage = BudgetUsage()
+        ledger = BudgetLedger(self.default_budget, usage)
+        bootstrap_call_id = str(uuid4())
+        bootstrap_started = datetime.now(UTC)
+        await self.store.start_tool_call(
+            call_id=bootstrap_call_id,
+            run_id=run.run_id,
+            tool_name="session.get_state",
+            arguments={"session_id": run.resource_id},
+            started_at=bootstrap_started,
+        )
+        await self.store.append_event(
+            run.run_id,
+            "tool_started",
+            node="session.get_state",
+            data={"call_id": bootstrap_call_id, "plan_step_id": "bootstrap"},
+        )
+        bootstrap = await self.tools.execute(
+            name="session.get_state",
+            arguments={"session_id": run.resource_id},
+            allowed_tools={"session.get_state"},
+            run_id=run.run_id,
+            plan_step_id="bootstrap",
+        )
+        ledger.record_tool()
+        await self.store.finish_tool_call(
+            call_id=bootstrap_call_id,
+            result_summary=_tool_result_summary(bootstrap),
+            status="succeeded" if bootstrap.succeeded else "failed",
+            duration_ms=bootstrap.duration_ms,
+            error=bootstrap.error.message if bootstrap.error else None,
+            completed_at=datetime.now(UTC),
+        )
+        await self.store.append_event(
+            run.run_id,
+            "tool_completed",
+            node="session.get_state",
+            data={"call_id": bootstrap_call_id, **_tool_result_summary(bootstrap)},
+        )
+        if not bootstrap.succeeded or not isinstance(bootstrap.output, dict):
+            await self.store.set_status(run.run_id, "failed", terminal_reason="failed")
+            await self.store.append_event(
+                run.run_id,
+                "run_failed",
+                data={
+                    "reason": "bootstrap_failed",
+                    "tool": bootstrap.model_dump(mode="json"),
+                },
+            )
+            return None
+        title = bootstrap.output.get("knowledge_node_title", run.resource_id)
+        objective = f"完成学习 Session：{title}"
+        tools = self._all_specs()
+        try:
+            planned = await self.policy.create_plan(
+                objective=objective,
+                initial_state=bootstrap.output,
+                tools=tools,
+                budget=self.default_budget,
+            )
+        except Exception as error:
+            await self.store.append_event(
+                run.run_id,
+                "plan_rejected",
+                data={
+                    "reason": "planner_output_invalid",
+                    "error": f"{type(error).__name__}: {str(error)[:1_000]}",
+                },
+            )
+            await self.store.set_status(
+                run.run_id, "failed", terminal_reason="failed"
+            )
+            return None
+        token_decision = ledger.record_model(planned.usage)
+        if not token_decision.allowed:
+            await self.store.set_status(
+                run.run_id,
+                "failed",
+                terminal_reason=token_decision.terminal_reason or "budget_exhausted",  # type: ignore[arg-type]
+            )
+            return None
+        try:
+            plan = _normalize_and_validate_plan(
+                planned.value, {item.name for item in tools}
+            )
+        except ValueError as error:
+            await self.store.append_event(
+                run.run_id,
+                "plan_rejected",
+                data={"reason": "plan_invariant_failed", "error": str(error)},
+            )
+            await self.store.set_status(
+                run.run_id, "failed", terminal_reason="failed"
+            )
+            return None
+        bootstrap_observation = Observation(
+            action_id="bootstrap",
+            plan_step_id=plan.steps[0].id,
+            source="session.get_state",
+            succeeded=True,
+            summary="Loaded the initial Session state.",
+            data=bootstrap.output,
+        )
+        state = DynamicAgentState(
+            run_id=run.run_id,
+            plan=plan,
+            budget=self.default_budget,
+            usage=ledger.usage,
+            observations=[bootstrap_observation],
+        )
+        await self.store.save_plan_version(
+            run.run_id, plan.version, plan.model_dump_json()
+        )
+        await self._save(state)
+        await self.store.append_event(
+            run.run_id,
+            "plan_created",
+            data={"plan": plan.model_dump(mode="json")},
+        )
+        await self.store.append_event(
+            run.run_id,
+            "observation_recorded",
+            node=plan.steps[0].id,
+            data=_observation_trace(bootstrap_observation),
+        )
+        await self.store.append_event(
+            run.run_id,
+            "budget_updated",
+            data=ledger.usage.model_dump(mode="json"),
+        )
+        return state
+
+    async def _execute_tool_action(
+        self,
+        run: AgentRun,
+        state: DynamicAgentState,
+        step: PlanStep,
+        action: AgentAction,
+        action_id: str,
+    ) -> AsyncIterator[AgentEvent]:
+        ledger = BudgetLedger(state.budget, state.usage)
+        preflight = ledger.preflight("tool")
+        if not preflight.allowed:
+            await self._save(state)
+            yield await self._terminate(
+                run.run_id,
+                preflight.terminal_reason or "budget_exhausted",
+                preflight.detail,
+            )
+            return
+        tool_name = action.tool_name or "unknown"
+        started_at = datetime.now(UTC)
+        await self.store.start_tool_call(
+            call_id=action_id,
+            run_id=run.run_id,
+            tool_name=tool_name,
+            arguments=_redact_arguments(action.arguments),
+            started_at=started_at,
+        )
+        yield await self.store.append_event(
+            run.run_id,
+            "tool_started",
+            node=tool_name,
+            data={"call_id": action_id, "plan_step_id": step.id},
+        )
+        result = await self.tools.execute(
+            name=tool_name,
+            arguments=action.arguments,
+            allowed_tools=set(step.allowed_tools),
+            run_id=run.run_id,
+            plan_step_id=step.id,
+        )
+        ledger.record_tool()
+        summary = _tool_result_summary(result)
+        await self.store.finish_tool_call(
+            call_id=action_id,
+            result_summary=summary,
+            status="succeeded" if result.succeeded else "failed",
+            duration_ms=result.duration_ms,
+            error=result.error.message if result.error else None,
+            completed_at=datetime.now(UTC),
+        )
+        observation = Observation(
+            action_id=action_id,
+            plan_step_id=step.id,
+            source=tool_name,
+            succeeded=result.succeeded,
+            summary=(
+                f"{tool_name} completed successfully"
+                if result.succeeded
+                else _tool_failure_summary(tool_name, result)
+            ),
+            data=_observation_data(result.output),
+            error_kind=result.error.kind if result.error else None,
+        )
+        state = _append_observation(state, observation, succeeded=result.succeeded)
+        state = state.model_copy(update={"usage": ledger.usage})
+        await self._save(state)
+        yield await self.store.append_event(
+            run.run_id,
+            "tool_completed",
+            node=tool_name,
+            data={
+                "call_id": action_id,
+                **_tool_result_summary(result),
+                "duration_ms": result.duration_ms,
+            },
+        )
+        yield await self.store.append_event(
+            run.run_id,
+            "observation_recorded",
+            node=step.id,
+            data=_observation_trace(observation),
+        )
+        yield await self._budget_event(state)
+
+    async def _try_replan(
+        self, run: AgentRun, state: DynamicAgentState
+    ) -> tuple[DynamicAgentState, AgentEvent, AgentEvent] | None:
+        ledger = BudgetLedger(state.budget, state.usage)
+        allowed = ledger.record_replan()
+        if not allowed.allowed or not state.observations:
+            return None
+        step = state.plan.ready_step()
+        if step is None:
+            return None
+        context = self.context.compile(state, step, self._allowed_specs(step))
+        latest = state.observations[-1]
+        failure = ToolResult(
+            tool_name=latest.source,
+            succeeded=False,
+            error={
+                "kind": latest.error_kind or ToolErrorKind.PERMANENT,
+                "message": latest.summary,
+                "retryable": latest.error_kind
+                in {ToolErrorKind.TRANSIENT, ToolErrorKind.TIMEOUT},
+            },
+            duration_ms=0,
+        )
+        token_check = ledger.preflight("model")
+        if not token_check.allowed:
+            return None
+        proposal = await self.policy.replan(
+            state=state, context=context, failure=failure
+        )
+        if not ledger.record_model(proposal.usage).allowed:
+            return None
+        try:
+            revised = apply_replan(state.plan, proposal.value)
+            _validate_plan_tools(revised, {item.name for item in self._all_specs()})
+        except ValueError as error:
+            await self.store.append_event(
+                run.run_id,
+                "plan_rejected",
+                data={
+                    "reason": "replan_invariant_failed",
+                    "error": str(error),
+                },
+            )
+            return None
+        state = state.model_copy(
+            update={
+                "plan": revised,
+                "usage": ledger.usage,
+                "consecutive_failures": 0,
+                "last_action_signature": None,
+                "same_action_count": 0,
+            }
+        )
+        await self.store.save_plan_version(
+            run.run_id, revised.version, revised.model_dump_json()
+        )
+        await self._save(state)
+        budget_event = await self._budget_event(state)
+        replan_event = await self.store.append_event(
+            run.run_id,
+            "plan_replanned",
+            data={
+                "version": revised.version,
+                "reason": revised.change_reason,
+                "plan": revised.model_dump(mode="json"),
+            },
+        )
+        return state, replan_event, budget_event
+
+    def _apply_resume(
+        self, state: DynamicAgentState, resume: object
+    ) -> tuple[DynamicAgentState, Observation]:
+        pending = state.pending_interrupt
+        if pending is None:
+            raise ValueError("dynamic Agent has no pending Interrupt")
+        if not isinstance(resume, dict):
+            raise ValueError("resume value must be an object")
+        supplied_id = resume.get("interrupt_id")
+        if supplied_id is not None and supplied_id != pending.id:
+            raise ValueError("resume input does not match the active Interrupt")
+        value = resume.get("value", resume)
+        paused_for = datetime.now(UTC) - pending.created_at
+        shifted_start = state.usage.started_at + paused_for
+        observation = Observation(
+            action_id=f"resume:{pending.id}",
+            plan_step_id=pending.plan_step_id,
+            source="user.input",
+            succeeded=True,
+            summary=f"Learner supplied {pending.type} input.",
+            data={"input_type": pending.type, "value": value},
+        )
+        state = _append_observation(state, observation, succeeded=True)
+        state = state.model_copy(
+            update={
+                "pending_interrupt": None,
+                "usage": state.usage.model_copy(update={"started_at": shifted_start}),
+            }
+        )
+        return state, observation
+
+    def _validate_action(self, action: AgentAction, step: PlanStep) -> str | None:
+        if action.plan_step_id != step.id:
+            return "action does not target the active Plan Step"
+        if action.action == ActionType.CALL_TOOL:
+            definition = self.tools.registry.get(action.tool_name or "")
+            if definition is None:
+                return "action selected an unregistered Tool"
+            if action.tool_name not in step.allowed_tools:
+                return "action selected a Tool outside the Step allowlist"
+            if not self.allow_write_tools and not definition.spec.read_only:
+                return "write Tool is disabled in Shadow mode"
+        return None
+
+    def _all_specs(self) -> list[ToolSpec]:
+        specs = self.tools.registry.specs()
+        visible: list[ToolSpec] = []
+        for item in specs:
+            definition = self.tools.registry.get(item.name)
+            if definition is None:
+                continue
+            if self.allow_write_tools or definition.spec.read_only:
+                visible.append(item)
+        return visible
+
+    def _allowed_specs(self, step: PlanStep) -> list[ToolSpec]:
+        allowed = self.tools.registry.specs(set(step.allowed_tools))
+        if self.allow_write_tools:
+            return allowed
+        return [item for item in allowed if item.read_only]
+
+    async def _save(self, state: DynamicAgentState) -> None:
+        await self.store.save_dynamic_state(state.run_id, state.model_dump_json())
+
+    async def _budget_event(self, state: DynamicAgentState) -> AgentEvent:
+        return await self.store.append_event(
+            state.run_id,
+            "budget_updated",
+            data=state.usage.model_dump(mode="json"),
+        )
+
+    async def _terminate(
+        self, run_id: str, reason: str, detail: str | None = None
+    ) -> AgentEvent:
+        if reason == "completed":
+            await self.store.set_status(
+                run_id, "completed", terminal_reason="completed"
+            )
+            return await self.store.append_event(
+                run_id,
+                "run_completed",
+                data={"terminal_reason": reason, "summary": detail},
+            )
+        if reason == "cancelled":
+            await self.store.set_status(
+                run_id, "cancelled", terminal_reason="cancelled"
+            )
+            return await self.store.append_event(
+                run_id, "run_cancelled", data={"terminal_reason": reason}
+            )
+        terminal = reason if reason in {
+            "budget_exhausted",
+            "deadline_exceeded",
+            "verification_failed",
+        } else "failed"
+        await self.store.set_status(
+            run_id, "failed", terminal_reason=terminal  # type: ignore[arg-type]
+        )
+        return await self.store.append_event(
+            run_id,
+            "run_failed",
+            data={"terminal_reason": terminal, "message": detail},
+        )
+
+
+def _normalize_and_validate_plan(plan: AgentPlan, allowed_tools: set[str]) -> AgentPlan:
+    normalized = plan.model_copy(
+        update={
+            "version": 1,
+            "steps": [
+                step.model_copy(update={"status": StepStatus.PENDING})
+                for step in plan.steps
+            ],
+        }
+    )
+    normalized = AgentPlan.model_validate(normalized.model_dump())
+    _validate_plan_tools(normalized, allowed_tools)
+    return normalized
+
+
+def _validate_plan_tools(plan: AgentPlan, allowed_tools: set[str]) -> None:
+    selected = {tool for step in plan.steps for tool in step.allowed_tools}
+    unknown = selected - allowed_tools
+    if unknown:
+        raise ValueError(f"Plan references unavailable Tools: {sorted(unknown)}")
+
+
+def _activate_step(plan: AgentPlan, step_id: str) -> AgentPlan:
+    return plan.model_copy(
+        update={
+            "steps": [
+                step.model_copy(
+                    update={
+                        "status": (
+                            StepStatus.ACTIVE if step.id == step_id else step.status
+                        ),
+                        "attempts": (
+                            step.attempts + 1 if step.id == step_id else step.attempts
+                        ),
+                    }
+                )
+                for step in plan.steps
+            ]
+        }
+    )
+
+
+def _complete_step(plan: AgentPlan, step_id: str, evidence_ids: list[str]) -> AgentPlan:
+    return plan.model_copy(
+        update={
+            "steps": [
+                step.model_copy(
+                    update={
+                        "status": StepStatus.COMPLETED,
+                        "evidence_ids": list(dict.fromkeys(evidence_ids)),
+                    }
+                )
+                if step.id == step_id
+                else step
+                for step in plan.steps
+            ]
+        }
+    )
+
+
+def _step_by_id(plan: AgentPlan, step_id: str) -> PlanStep:
+    return next(step for step in plan.steps if step.id == step_id)
+
+
+def _record_action_signature(
+    state: DynamicAgentState, action: AgentAction
+) -> tuple[DynamicAgentState, int]:
+    signature = action.signature()
+    count = (
+        state.same_action_count + 1
+        if signature == state.last_action_signature
+        else 1
+    )
+    return (
+        state.model_copy(
+            update={"last_action_signature": signature, "same_action_count": count}
+        ),
+        count,
+    )
+
+
+def _record_failure(state: DynamicAgentState) -> DynamicAgentState:
+    return state.model_copy(
+        update={"consecutive_failures": state.consecutive_failures + 1}
+    )
+
+
+def _append_observation(
+    state: DynamicAgentState, observation: Observation, *, succeeded: bool
+) -> DynamicAgentState:
+    return state.model_copy(
+        update={
+            "observations": [*state.observations, observation][-100:],
+            "consecutive_failures": (
+                0 if succeeded else state.consecutive_failures + 1
+            ),
+        }
+    )
+
+
+def _redact_arguments(arguments: dict[str, object]) -> dict[str, object]:
+    redacted = dict(arguments)
+    selected = redacted.pop("selected_options", None)
+    if isinstance(selected, list):
+        redacted["selected_option_count"] = len(selected)
+    return redacted
+
+
+def _action_trace(action: AgentAction) -> dict[str, object]:
+    payload = action.model_dump(mode="json")
+    arguments = payload.get("arguments")
+    if isinstance(arguments, dict):
+        payload["arguments"] = _redact_arguments(arguments)
+    return payload
+
+
+def _observation_trace(observation: Observation) -> dict[str, object]:
+    """Trace 只保存脱敏摘要和 keys；完整值只存在 durable state。"""
+
+    return {
+        "id": observation.id,
+        "action_id": observation.action_id,
+        "plan_step_id": observation.plan_step_id,
+        "source": observation.source,
+        "succeeded": observation.succeeded,
+        "summary": observation.summary,
+        "data_keys": sorted(observation.data),
+        "error_kind": observation.error_kind,
+        "created_at": observation.created_at.isoformat(),
+    }
+
+
+def _observation_data(output: object) -> dict[str, object]:
+    if isinstance(output, dict):
+        return output
+    if isinstance(output, list):
+        return {"items": output}
+    return {"value": output}
+
+
+def _tool_result_summary(result: ToolResult) -> dict[str, object]:
+    return {
+        "succeeded": result.succeeded,
+        "truncated": result.truncated,
+        "output_type": type(result.output).__name__,
+        "error_kind": result.error.kind if result.error else None,
+    }
+
+
+def _tool_failure_summary(tool_name: str, result: ToolResult) -> str:
+    message = result.error.message if result.error is not None else "unknown"
+    return f"{tool_name} failed: {message}"

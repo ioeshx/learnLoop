@@ -35,8 +35,13 @@ export default function AgentTracePage() {
       {!trace && !error ? <p className="loading-card">正在读取运行轨迹…</p> : null}
       {trace ? (
         <>
-          <p className="eyebrow">{trace.run.graph}</p>
+          <p className="eyebrow">
+            {trace.run.graph} · {trace.run.engine_version} · attempt {trace.run.attempt_no}
+          </p>
           <h1 className="page-title">{trace.run.status}</h1>
+          {trace.run.terminal_reason ? (
+            <p className="page-subtitle">终止原因：{trace.run.terminal_reason}</p>
+          ) : null}
           <section className="metric-grid compact-metrics">
             <Metric label="事件" value={trace.events.length} />
             <Metric label="Tool 调用" value={trace.tool_calls.length} />
@@ -46,6 +51,40 @@ export default function AgentTracePage() {
               value={`${trace.total_model_duration_ms.toFixed(0)} ms`}
             />
           </section>
+
+          {trace.dynamic_state ? (
+            <section className="dashboard-card">
+              <p className="eyebrow">Dynamic Agent Plan v{trace.dynamic_state.plan.version}</p>
+              <h2>{trace.dynamic_state.plan.objective}</h2>
+              <div className="metric-grid compact-metrics">
+                <Metric
+                  label="Loop Step"
+                  value={`${trace.dynamic_state.usage.steps}/${trace.dynamic_state.budget.max_steps}`}
+                />
+                <Metric
+                  label="Model Call"
+                  value={`${trace.dynamic_state.usage.model_calls}/${trace.dynamic_state.budget.max_model_calls}`}
+                />
+                <Metric
+                  label="Tool Call"
+                  value={`${trace.dynamic_state.usage.tool_calls}/${trace.dynamic_state.budget.max_tool_calls}`}
+                />
+                <Metric
+                  label="Replan"
+                  value={`${trace.dynamic_state.usage.replans}/${trace.dynamic_state.budget.max_replans}`}
+                />
+              </div>
+              {trace.dynamic_state.plan.steps.map((step) => (
+                <div className="trace-row" key={step.id}>
+                  <strong>{step.id} · {step.status}</strong>
+                  <span>{step.objective}</span>
+                  <small>
+                    Tools: {step.allowed_tools.join("、") || "无"} · Evidence: {step.evidence_ids.length}
+                  </small>
+                </div>
+              ))}
+            </section>
+          ) : null}
 
           <section className="trace-columns">
             <article className="dashboard-card">

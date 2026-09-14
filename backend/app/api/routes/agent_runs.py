@@ -8,7 +8,8 @@ from typing import Annotated
 from fastapi import APIRouter, Header, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 
-from app.agent.execution import AgentEvent, AgentRun, AgentRuntime
+from app.agent.execution import AgentEvent, AgentRun, AgentRuntime, EngineVersion
+from app.agent.execution.comparison import compare_runs
 from app.api.dependencies import AgentRuntimeDep
 from app.api.schemas import (
     AgentEventResponse,
@@ -24,9 +25,18 @@ router = APIRouter(prefix="/agent")
 
 @router.post("/study-sessions/{session_id}/runs")
 async def start_daily_learning_run(
-    session_id: str, runtime: AgentRuntimeDep
+    session_id: str,
+    runtime: AgentRuntimeDep,
+    engine_version: Annotated[EngineVersion, Query()] = "fixed_v1",
 ) -> StreamingResponse:
-    run, created = await runtime.create_run("daily_learning", session_id)
+    if engine_version == "dynamic_v2" and runtime.dynamic_kernel is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="dynamic_v2 requires an enabled LLM provider",
+        )
+    run, created = await runtime.create_run(
+        "daily_learning", session_id, engine_version=engine_version
+    )
     return await _run_stream_response(runtime, run, created=created)
 
 
@@ -57,7 +67,13 @@ async def resume_agent_run(
         )
     existing = await runtime.run_store.list_events(run.run_id)
     after_sequence = existing[-1].sequence if existing else 0
-    await runtime.start_execution(run, resume=payload.value)
+    resume_value: object = payload.value
+    if run.engine_version == "dynamic_v2":
+        resume_value = {
+            "interrupt_id": payload.interrupt_id,
+            "value": payload.value,
+        }
+    await runtime.start_execution(run, resume=resume_value)
     return StreamingResponse(
         _replay_events(runtime, run, after_sequence),
         media_type="text/event-stream",
@@ -97,6 +113,7 @@ async def get_agent_trace(
     events = await runtime.run_store.list_events(run.run_id)
     tool_calls = await runtime.run_store.list_tool_calls(run.run_id)
     model_calls = await runtime.run_store.list_model_calls(run.run_id)
+    stored_state = await runtime.run_store.load_dynamic_state(run.run_id)
     return AgentTraceResponse(
         run=AgentRunResponse.from_execution(run),
         events=[AgentEventResponse.from_execution(event) for event in events],
@@ -109,7 +126,50 @@ async def get_agent_trace(
         total_tokens=sum(call.total_tokens for call in model_calls),
         total_model_duration_ms=sum(call.duration_ms for call in model_calls),
         total_tool_duration_ms=sum(call.duration_ms or 0.0 for call in tool_calls),
+        dynamic_state=(json.loads(stored_state) if stored_state is not None else None),
+        plan_versions=await runtime.run_store.list_plan_versions(run.run_id),
     )
+
+
+@router.post("/runs/{run_id}/cancel", response_model=AgentRunResponse)
+async def cancel_agent_run(
+    run_id: str, runtime: AgentRuntimeDep
+) -> AgentRunResponse:
+    run = await _get_run(runtime, run_id)
+    return AgentRunResponse.from_execution(await runtime.cancel_run(run))
+
+
+@router.get("/runs/{run_id}/plans")
+async def list_agent_plan_versions(
+    run_id: str, runtime: AgentRuntimeDep
+) -> list[dict[str, object]]:
+    await _get_run(runtime, run_id)
+    return await runtime.run_store.list_plan_versions(run_id)
+
+
+@router.get("/comparisons")
+async def compare_agent_runs(
+    runtime: AgentRuntimeDep,
+    fixed_run_id: str,
+    dynamic_run_id: str,
+) -> dict[str, object]:
+    fixed = await _get_run(runtime, fixed_run_id)
+    dynamic = await _get_run(runtime, dynamic_run_id)
+    try:
+        return compare_runs(
+            fixed,
+            await runtime.run_store.list_events(fixed.run_id),
+            await runtime.run_store.list_tool_calls(fixed.run_id),
+            await runtime.run_store.list_model_calls(fixed.run_id),
+            dynamic,
+            await runtime.run_store.list_events(dynamic.run_id),
+            await runtime.run_store.list_tool_calls(dynamic.run_id),
+            await runtime.run_store.list_model_calls(dynamic.run_id),
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
+        ) from error
 
 
 @router.get("/prompts")
@@ -183,6 +243,7 @@ async def _replay_events(
             "awaiting_input",
             "completed",
             "failed",
+            "cancelled",
         }:
             return
         yield ": keep-alive\n\n"

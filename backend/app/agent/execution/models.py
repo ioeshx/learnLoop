@@ -5,8 +5,17 @@ from datetime import datetime
 from typing import Literal
 
 GraphKind = Literal["daily_learning", "goal_planning"]
+EngineVersion = Literal["fixed_v1", "dynamic_v2"]
 RunStatus = Literal[
-    "created", "running", "awaiting_input", "completed", "failed"
+    "created", "running", "awaiting_input", "completed", "failed", "cancelled"
+]
+TerminalReason = Literal[
+    "completed",
+    "failed",
+    "cancelled",
+    "budget_exhausted",
+    "deadline_exceeded",
+    "verification_failed",
 ]
 EventKind = Literal[
     "run_started",
@@ -18,6 +27,18 @@ EventKind = Literal[
     "run_completed",
     "run_failed",
     "model_completed",
+    "plan_created",
+    "plan_rejected",
+    "plan_replanned",
+    "action_decided",
+    "action_rejected",
+    "content_presented",
+    "observation_recorded",
+    "verification_completed",
+    "context_compiled",
+    "budget_updated",
+    "run_paused",
+    "run_cancelled",
 ]
 
 
@@ -63,7 +84,13 @@ class AgentRun:
     thread_id: str
     graph_kind: GraphKind
     resource_id: str
+    engine_version: EngineVersion
+    parent_run_id: str | None
+    attempt_no: int
     status: RunStatus
+    terminal_reason: TerminalReason | None
+    cancel_requested: bool
+    version: int
     created_at: datetime
     updated_at: datetime
 

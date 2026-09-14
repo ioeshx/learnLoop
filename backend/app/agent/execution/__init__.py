@@ -3,6 +3,7 @@
 from app.agent.execution.models import (
     AgentEvent,
     AgentRun,
+    EngineVersion,
     ModelCallTrace,
     ToolCallTrace,
 )
@@ -13,6 +14,7 @@ __all__ = [
     "AgentEvent",
     "AgentRun",
     "AgentRuntime",
+    "EngineVersion",
     "ModelCallTrace",
     "SqliteAgentRunStore",
     "ToolCallTrace",

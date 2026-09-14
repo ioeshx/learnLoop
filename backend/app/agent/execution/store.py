@@ -4,6 +4,7 @@ import asyncio
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 import aiosqlite
@@ -11,10 +12,12 @@ import aiosqlite
 from app.agent.execution.models import (
     AgentEvent,
     AgentRun,
+    EngineVersion,
     EventKind,
     GraphKind,
     ModelCallTrace,
     RunStatus,
+    TerminalReason,
     ToolCallTrace,
 )
 from app.infrastructure.llm.models import ModelCallObservation
@@ -37,6 +40,7 @@ class SqliteAgentRunStore:
         return store
 
     async def setup(self) -> None:
+        await self._upgrade_legacy_run_table()
         await self._connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS learnloop_agent_runs (
@@ -44,11 +48,21 @@ class SqliteAgentRunStore:
                 thread_id TEXT NOT NULL UNIQUE,
                 graph_kind TEXT NOT NULL,
                 resource_id TEXT NOT NULL,
+                engine_version TEXT NOT NULL DEFAULT 'fixed_v1',
+                parent_run_id TEXT,
+                attempt_no INTEGER NOT NULL DEFAULT 1,
                 status TEXT NOT NULL,
+                terminal_reason TEXT,
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                version INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                UNIQUE (graph_kind, resource_id)
+                FOREIGN KEY (parent_run_id) REFERENCES learnloop_agent_runs(run_id)
+                    ON DELETE SET NULL
             );
+            CREATE INDEX IF NOT EXISTS ix_learnloop_agent_runs_resource_attempt
+                ON learnloop_agent_runs
+                (graph_kind, resource_id, engine_version, attempt_no);
             CREATE INDEX IF NOT EXISTS ix_learnloop_agent_runs_status_updated
                 ON learnloop_agent_runs (status, updated_at);
             CREATE TABLE IF NOT EXISTS learnloop_agent_events (
@@ -103,51 +117,153 @@ class SqliteAgentRunStore:
             );
             CREATE INDEX IF NOT EXISTS ix_learnloop_model_calls_run_created
                 ON learnloop_model_calls (run_id, created_at);
+            CREATE TABLE IF NOT EXISTS learnloop_dynamic_agent_states (
+                run_id TEXT PRIMARY KEY,
+                state_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES learnloop_agent_runs(run_id)
+                    ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS learnloop_agent_plan_versions (
+                run_id TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                plan_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (run_id, version),
+                FOREIGN KEY (run_id) REFERENCES learnloop_agent_runs(run_id)
+                    ON DELETE CASCADE
+            );
             """
         )
         await self._connection.commit()
+
+    async def _upgrade_legacy_run_table(self) -> None:
+        """将 v1 单 Run 表原地升级为可重复运行的 v2 Run protocol。
+
+        SQLite 无法直接删除 ``UNIQUE(graph_kind, resource_id)``，所以这里使用 table
+        rebuild。``legacy_alter_table`` 保证已有 Event/Trace foreign key 仍指向新表名；
+        迁移全程在 transaction 中完成，失败时不会留下半张表。
+        """
+
+        cursor = await self._connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' "
+            "AND name='learnloop_agent_runs'"
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        if row is None:
+            return
+        sql = str(row["sql"])
+        if "engine_version" in sql and "UNIQUE (graph_kind, resource_id)" not in sql:
+            return
+        await self._connection.commit()
+        await self._connection.execute("PRAGMA foreign_keys = OFF")
+        await self._connection.execute("PRAGMA legacy_alter_table = ON")
+        try:
+            await self._connection.executescript(
+                """
+                BEGIN IMMEDIATE;
+                ALTER TABLE learnloop_agent_runs RENAME TO learnloop_agent_runs_v1;
+                CREATE TABLE learnloop_agent_runs (
+                    run_id TEXT PRIMARY KEY,
+                    thread_id TEXT NOT NULL UNIQUE,
+                    graph_kind TEXT NOT NULL,
+                    resource_id TEXT NOT NULL,
+                    engine_version TEXT NOT NULL DEFAULT 'fixed_v1',
+                    parent_run_id TEXT,
+                    attempt_no INTEGER NOT NULL DEFAULT 1,
+                    status TEXT NOT NULL,
+                    terminal_reason TEXT,
+                    cancel_requested INTEGER NOT NULL DEFAULT 0,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (parent_run_id) REFERENCES learnloop_agent_runs(run_id)
+                        ON DELETE SET NULL
+                );
+                INSERT INTO learnloop_agent_runs (
+                    run_id, thread_id, graph_kind, resource_id, engine_version,
+                    parent_run_id, attempt_no, status, terminal_reason,
+                    cancel_requested, version, created_at, updated_at
+                )
+                SELECT run_id, thread_id, graph_kind, resource_id, 'fixed_v1',
+                       NULL, 1, status,
+                       CASE status
+                           WHEN 'completed' THEN 'completed'
+                           WHEN 'failed' THEN 'failed'
+                           ELSE NULL
+                       END,
+                       0, 1, created_at, updated_at
+                FROM learnloop_agent_runs_v1;
+                DROP TABLE learnloop_agent_runs_v1;
+                COMMIT;
+                """
+            )
+        finally:
+            await self._connection.execute("PRAGMA legacy_alter_table = OFF")
+            await self._connection.execute("PRAGMA foreign_keys = ON")
 
     async def close(self) -> None:
         await self._connection.close()
 
     async def create_or_get(
-        self, graph_kind: GraphKind, resource_id: str
+        self,
+        graph_kind: GraphKind,
+        resource_id: str,
+        *,
+        engine_version: EngineVersion = "fixed_v1",
+        parent_run_id: str | None = None,
     ) -> tuple[AgentRun, bool]:
+        """创建独立 Run；名称为兼容 v1 caller 保留，返回值始终是新 Run。"""
+
         async with self._write_lock:
             cursor = await self._connection.execute(
                 """
-                SELECT * FROM learnloop_agent_runs
-                WHERE graph_kind = ? AND resource_id = ?
+                SELECT COALESCE(MAX(attempt_no), 0) + 1
+                FROM learnloop_agent_runs
+                WHERE graph_kind = ? AND resource_id = ? AND engine_version = ?
                 """,
-                (graph_kind, resource_id),
+                (graph_kind, resource_id, engine_version),
             )
             row = await cursor.fetchone()
             await cursor.close()
-            if row is not None:
-                return _run_from_row(row), False
+            attempt_no = int(row[0]) if row is not None else 1
             now = datetime.now(UTC)
             run = AgentRun(
                 run_id=str(uuid4()),
                 thread_id=str(uuid4()),
                 graph_kind=graph_kind,
                 resource_id=resource_id,
+                engine_version=engine_version,
+                parent_run_id=parent_run_id,
+                attempt_no=attempt_no,
                 status="created",
+                terminal_reason=None,
+                cancel_requested=False,
+                version=1,
                 created_at=now,
                 updated_at=now,
             )
             await self._connection.execute(
                 """
                 INSERT INTO learnloop_agent_runs (
-                    run_id, thread_id, graph_kind, resource_id, status,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    run_id, thread_id, graph_kind, resource_id, engine_version,
+                    parent_run_id, attempt_no, status, terminal_reason,
+                    cancel_requested, version, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run.run_id,
                     run.thread_id,
                     run.graph_kind,
                     run.resource_id,
+                    run.engine_version,
+                    run.parent_run_id,
+                    run.attempt_no,
                     run.status,
+                    run.terminal_reason,
+                    int(run.cancel_requested),
+                    run.version,
                     run.created_at.isoformat(),
                     run.updated_at.isoformat(),
                 ),
@@ -172,15 +288,40 @@ class SqliteAgentRunStore:
         await cursor.close()
         return [_run_from_row(row) for row in rows]
 
-    async def set_status(self, run_id: str, status: RunStatus) -> AgentRun:
+    async def set_status(
+        self,
+        run_id: str,
+        status: RunStatus,
+        *,
+        terminal_reason: TerminalReason | None = None,
+        expected_version: int | None = None,
+    ) -> AgentRun:
         async with self._write_lock:
+            existing = await self.get(run_id)
+            if existing is None:
+                raise LookupError(f"agent run {run_id} was not found")
+            _validate_status_transition(existing.status, status)
+            if expected_version is not None and existing.version != expected_version:
+                raise RuntimeError("agent run was modified concurrently")
+            if status in {"completed", "failed", "cancelled"}:
+                terminal_reason = terminal_reason or status
+            elif terminal_reason is not None:
+                raise ValueError("only terminal Run states may have terminal_reason")
             now = datetime.now(UTC)
             cursor = await self._connection.execute(
                 """
-                UPDATE learnloop_agent_runs SET status = ?, updated_at = ?
-                WHERE run_id = ?
+                UPDATE learnloop_agent_runs
+                SET status = ?, terminal_reason = ?, updated_at = ?,
+                    version = version + 1
+                WHERE run_id = ? AND version = ?
                 """,
-                (status, now.isoformat(), run_id),
+                (
+                    status,
+                    terminal_reason,
+                    now.isoformat(),
+                    run_id,
+                    existing.version,
+                ),
             )
             if cursor.rowcount != 1:
                 await cursor.close()
@@ -191,6 +332,86 @@ class SqliteAgentRunStore:
             if run is None:
                 raise LookupError(f"agent run {run_id} was not found")
             return run
+
+    async def request_cancel(self, run_id: str) -> AgentRun:
+        async with self._write_lock:
+            existing = await self.get(run_id)
+            if existing is None:
+                raise LookupError(f"agent run {run_id} was not found")
+            if existing.status in {"completed", "failed", "cancelled"}:
+                return existing
+            now = datetime.now(UTC)
+            await self._connection.execute(
+                """
+                UPDATE learnloop_agent_runs
+                SET cancel_requested = 1, updated_at = ?, version = version + 1
+                WHERE run_id = ?
+                """,
+                (now.isoformat(), run_id),
+            )
+            await self._connection.commit()
+            refreshed = await self.get(run_id)
+            if refreshed is None:
+                raise LookupError(f"agent run {run_id} was not found")
+            return refreshed
+
+    async def save_dynamic_state(self, run_id: str, state_json: str) -> None:
+        async with self._write_lock:
+            await self._connection.execute(
+                """
+                INSERT INTO learnloop_dynamic_agent_states
+                    (run_id, state_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    state_json = excluded.state_json,
+                    updated_at = excluded.updated_at
+                """,
+                (run_id, state_json, datetime.now(UTC).isoformat()),
+            )
+            await self._connection.commit()
+
+    async def load_dynamic_state(self, run_id: str) -> str | None:
+        cursor = await self._connection.execute(
+            "SELECT state_json FROM learnloop_dynamic_agent_states WHERE run_id = ?",
+            (run_id,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        return str(row["state_json"]) if row is not None else None
+
+    async def save_plan_version(
+        self, run_id: str, version: int, plan_json: str
+    ) -> None:
+        async with self._write_lock:
+            await self._connection.execute(
+                """
+                INSERT OR IGNORE INTO learnloop_agent_plan_versions
+                    (run_id, version, plan_json, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (run_id, version, plan_json, datetime.now(UTC).isoformat()),
+            )
+            await self._connection.commit()
+
+    async def list_plan_versions(self, run_id: str) -> list[dict[str, object]]:
+        cursor = await self._connection.execute(
+            """
+            SELECT version, plan_json, created_at
+            FROM learnloop_agent_plan_versions
+            WHERE run_id = ? ORDER BY version
+            """,
+            (run_id,),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [
+            {
+                "version": int(row["version"]),
+                "plan": json.loads(str(row["plan_json"])),
+                "created_at": str(row["created_at"]),
+            }
+            for row in rows
+        ]
 
     async def append_event(
         self,
@@ -410,7 +631,7 @@ class SqliteAgentRunStore:
         cursor = await self._connection.execute(
             """
             SELECT * FROM learnloop_agent_runs
-            WHERE status IN ('completed', 'failed') AND updated_at < ?
+            WHERE status IN ('completed', 'failed', 'cancelled') AND updated_at < ?
             """,
             (cutoff.astimezone(UTC).isoformat(),),
         )
@@ -432,10 +653,38 @@ def _run_from_row(row: aiosqlite.Row) -> AgentRun:
         thread_id=str(row["thread_id"]),
         graph_kind=str(row["graph_kind"]),  # type: ignore[arg-type]
         resource_id=str(row["resource_id"]),
+        engine_version=str(row["engine_version"]),  # type: ignore[arg-type]
+        parent_run_id=(
+            str(row["parent_run_id"]) if row["parent_run_id"] is not None else None
+        ),
+        attempt_no=int(row["attempt_no"]),
         status=str(row["status"]),  # type: ignore[arg-type]
+        terminal_reason=cast(
+            TerminalReason | None,
+            (
+                str(row["terminal_reason"])
+                if row["terminal_reason"] is not None
+                else None
+            ),
+        ),
+        cancel_requested=bool(row["cancel_requested"]),
+        version=int(row["version"]),
         created_at=datetime.fromisoformat(str(row["created_at"])),
         updated_at=datetime.fromisoformat(str(row["updated_at"])),
     )
+
+
+def _validate_status_transition(current: RunStatus, target: RunStatus) -> None:
+    allowed: dict[RunStatus, set[RunStatus]] = {
+        "created": {"created", "running", "cancelled", "failed"},
+        "running": {"running", "awaiting_input", "completed", "failed", "cancelled"},
+        "awaiting_input": {"awaiting_input", "running", "cancelled", "failed"},
+        "completed": {"completed"},
+        "failed": {"failed"},
+        "cancelled": {"cancelled"},
+    }
+    if target not in allowed[current]:
+        raise ValueError(f"invalid Agent Run transition: {current} -> {target}")
 
 
 def _event_from_row(row: aiosqlite.Row) -> AgentEvent:

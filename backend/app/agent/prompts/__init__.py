@@ -1,6 +1,11 @@
 """Prompt catalog exposed to model-backed application services."""
 
 from app.agent.prompts.answer_evaluation import ANSWER_EVALUATION_PROMPT
+from app.agent.prompts.dynamic_agent import (
+    DECISION_PROMPT,
+    PLANNER_PROMPT,
+    REPLAN_PROMPT,
+)
 from app.agent.prompts.exercise import EXERCISE_PROMPT
 from app.agent.prompts.goal_clarification import GOAL_CLARIFICATION_PROMPT
 from app.agent.prompts.knowledge_graph import KNOWLEDGE_GRAPH_PROMPT
@@ -12,6 +17,9 @@ from app.agent.prompts.models import PromptInput, PromptTemplate, RenderedPrompt
 from app.agent.prompts.study_plan import STUDY_PLAN_PROMPT
 
 PROMPT_CATALOG = (
+    PLANNER_PROMPT,
+    DECISION_PROMPT,
+    REPLAN_PROMPT,
     GOAL_CLARIFICATION_PROMPT,
     KNOWLEDGE_GRAPH_PROMPT,
     STUDY_PLAN_PROMPT,

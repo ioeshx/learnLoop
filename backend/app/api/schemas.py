@@ -384,7 +384,13 @@ class AgentRunResponse(BaseModel):
     thread_id: str
     graph: str
     resource_id: str
+    engine_version: str
+    parent_run_id: str | None
+    attempt_no: int
     status: str
+    terminal_reason: str | None
+    cancel_requested: bool
+    version: int
     created_at: datetime
     updated_at: datetime
 
@@ -395,7 +401,13 @@ class AgentRunResponse(BaseModel):
             thread_id=run.thread_id,
             graph=run.graph_kind,
             resource_id=run.resource_id,
+            engine_version=run.engine_version,
+            parent_run_id=run.parent_run_id,
+            attempt_no=run.attempt_no,
             status=run.status,
+            terminal_reason=run.terminal_reason,
+            cancel_requested=run.cancel_requested,
+            version=run.version,
             created_at=run.created_at,
             updated_at=run.updated_at,
         )
@@ -480,10 +492,13 @@ class AgentTraceResponse(BaseModel):
     total_tokens: int
     total_model_duration_ms: float
     total_tool_duration_ms: float
+    dynamic_state: dict[str, object] | None = None
+    plan_versions: list[dict[str, object]] = Field(default_factory=list)
 
 
 class ResumeAgentRunRequest(RequestModel):
     value: JsonValue
+    interrupt_id: str | None = None
 
 
 class IngestUrlRequest(RequestModel):

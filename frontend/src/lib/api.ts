@@ -116,7 +116,8 @@ export type AgentRunStatus =
   | "running"
   | "awaiting_input"
   | "completed"
-  | "failed";
+  | "failed"
+  | "cancelled";
 
 export type AgentEventKind =
   | "run_started"
@@ -127,7 +128,19 @@ export type AgentEventKind =
   | "interrupt_created"
   | "run_completed"
   | "run_failed"
-  | "model_completed";
+  | "model_completed"
+  | "plan_created"
+  | "plan_rejected"
+  | "plan_replanned"
+  | "action_decided"
+  | "action_rejected"
+  | "content_presented"
+  | "observation_recorded"
+  | "verification_completed"
+  | "context_compiled"
+  | "budget_updated"
+  | "run_paused"
+  | "run_cancelled";
 
 export type AgentEvent = {
   run_id: string;
@@ -143,7 +156,13 @@ export type AgentRun = {
   thread_id: string;
   graph: "daily_learning" | "goal_planning";
   resource_id: string;
+  engine_version: "fixed_v1" | "dynamic_v2";
+  parent_run_id: string | null;
+  attempt_no: number;
   status: AgentRunStatus;
+  terminal_reason: string | null;
+  cancel_requested: boolean;
+  version: number;
   created_at: string;
   updated_at: string;
 };
@@ -183,6 +202,45 @@ export type AgentTrace = {
   total_tokens: number;
   total_model_duration_ms: number;
   total_tool_duration_ms: number;
+  dynamic_state: DynamicAgentState | null;
+  plan_versions: Array<{
+    version: number;
+    plan: DynamicAgentPlan;
+    created_at: string;
+  }>;
+};
+
+export type DynamicAgentPlan = {
+  objective: string;
+  version: number;
+  change_reason: string | null;
+  steps: Array<{
+    id: string;
+    objective: string;
+    status: "pending" | "active" | "completed" | "blocked" | "skipped";
+    success_criteria: string[];
+    allowed_tools: string[];
+    evidence_ids: string[];
+    attempts: number;
+  }>;
+};
+
+export type DynamicAgentState = {
+  plan: DynamicAgentPlan;
+  usage: {
+    steps: number;
+    model_calls: number;
+    tool_calls: number;
+    total_tokens: number;
+    replans: number;
+  };
+  budget: {
+    max_steps: number;
+    max_model_calls: number;
+    max_tool_calls: number;
+    max_total_tokens: number;
+    max_replans: number;
+  };
 };
 
 export type LearningInsights = {
@@ -536,12 +594,17 @@ export function startDailyAgentRun(
   sessionId: string,
   onEvent: (event: AgentEvent) => void,
   signal?: AbortSignal,
+  engineVersion: "fixed_v1" | "dynamic_v2" = "fixed_v1",
 ): Promise<AgentStreamResult> {
   return streamAgentEvents(
-    `/agent/study-sessions/${sessionId}/runs`,
+    `/agent/study-sessions/${sessionId}/runs?engine_version=${engineVersion}`,
     { method: "POST", signal },
     onEvent,
   );
+}
+
+export function cancelAgentRun(runId: string): Promise<AgentRun> {
+  return apiRequest<AgentRun>(`/agent/runs/${runId}/cancel`, { method: "POST" });
 }
 
 export function resumeAgentRun(

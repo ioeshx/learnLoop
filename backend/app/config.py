@@ -44,6 +44,18 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=60.0, gt=0, le=600)
     llm_max_retries: int = Field(default=2, ge=0, le=5)
     checkpoint_retention_days: int = Field(default=30, ge=1, le=3650)
+    agent_dynamic_writes_enabled: bool = False
+    agent_max_steps: int = Field(default=24, ge=2, le=200)
+    agent_max_model_calls: int = Field(default=30, ge=1, le=200)
+    agent_max_tool_calls: int = Field(default=20, ge=0, le=200)
+    agent_max_input_tokens: int = Field(default=60_000, ge=1_000)
+    agent_max_output_tokens: int = Field(default=20_000, ge=500)
+    agent_max_total_tokens: int = Field(default=80_000, ge=1_500)
+    agent_deadline_seconds: float = Field(default=300.0, gt=0, le=3_600)
+    agent_max_same_action: int = Field(default=2, ge=1, le=10)
+    agent_max_consecutive_failures: int = Field(default=3, ge=1, le=20)
+    agent_max_replans: int = Field(default=2, ge=0, le=10)
+    agent_context_tokens: int = Field(default=12_000, ge=1_000, le=200_000)
     embedding_provider: Literal["local", "openai_compatible"] = "local"
     embedding_model: str = "text-embedding-3-small"
     embedding_api_key: SecretStr | None = None
@@ -133,6 +145,12 @@ class Settings(BaseSettings):
         if self.job_retry_base_seconds > self.job_retry_max_seconds:
             raise ValueError(
                 "job_retry_base_seconds must not exceed job_retry_max_seconds"
+            )
+        if self.agent_max_total_tokens > (
+            self.agent_max_input_tokens + self.agent_max_output_tokens
+        ):
+            raise ValueError(
+                "agent_max_total_tokens cannot exceed input plus output limits"
             )
         return self
 

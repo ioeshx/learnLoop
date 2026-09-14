@@ -217,7 +217,9 @@ async def test_cleanup_removes_only_expired_terminal_runs(tmp_path: Path) -> Non
     async with open_agent_runtime(settings, dependencies, None) as runtime:
         completed, _ = await runtime.create_run("daily_learning", "old-complete")
         paused, _ = await runtime.create_run("daily_learning", "old-paused")
+        await runtime.run_store.set_status(completed.run_id, "running")
         await runtime.run_store.set_status(completed.run_id, "completed")
+        await runtime.run_store.set_status(paused.run_id, "running")
         await runtime.run_store.set_status(paused.run_id, "awaiting_input")
 
     connection = await aiosqlite.connect(settings.checkpoint_path.as_posix())
@@ -231,6 +233,22 @@ async def test_cleanup_removes_only_expired_terminal_runs(tmp_path: Path) -> Non
     async with open_agent_runtime(settings, dependencies, None) as runtime:
         assert await runtime.run_store.get(completed.run_id) is None
         assert await runtime.run_store.get(paused.run_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_same_resource_supports_multiple_engine_attempts(tmp_path: Path) -> None:
+    """Run identity no longer collapses pass^k or fixed/dynamic comparisons."""
+
+    _, dependencies, session_id, _ = await _study_setup()
+    settings = Settings(environment="test", data_dir=tmp_path / "data")
+    async with open_agent_runtime(settings, dependencies, None) as runtime:
+        first, _ = await runtime.create_run("daily_learning", session_id)
+        second, _ = await runtime.create_run("daily_learning", session_id)
+
+    assert first.run_id != second.run_id
+    assert first.attempt_no == 1
+    assert second.attempt_no == 2
+    assert first.engine_version == second.engine_version == "fixed_v1"
 
 
 def _parse_sse(body: str) -> list[dict[str, object]]:
