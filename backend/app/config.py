@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     agent_max_consecutive_failures: int = Field(default=3, ge=1, le=20)
     agent_max_replans: int = Field(default=2, ge=0, le=10)
     agent_context_tokens: int = Field(default=12_000, ge=1_000, le=200_000)
+    agent_context_output_reserve_tokens: int = Field(default=2_048, ge=128)
+    agent_context_recent_observations: int = Field(default=24, ge=1, le=100)
+    agent_context_source_ttl_seconds: int = Field(
+        default=86_400, ge=60, le=31_536_000
+    )
+    agent_context_debug_full: bool = False
     embedding_provider: Literal["local", "openai_compatible"] = "local"
     embedding_model: str = "text-embedding-3-small"
     embedding_api_key: SecretStr | None = None
@@ -151,6 +157,11 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "agent_max_total_tokens cannot exceed input plus output limits"
+            )
+        if self.agent_context_output_reserve_tokens >= self.agent_context_tokens:
+            raise ValueError(
+                "agent_context_output_reserve_tokens must be less than "
+                "agent_context_tokens"
             )
         return self
 

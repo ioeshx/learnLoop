@@ -36,6 +36,7 @@ EventKind = Literal[
     "observation_recorded",
     "verification_completed",
     "context_compiled",
+    "context_snapshot_created",
     "budget_updated",
     "run_paused",
     "run_cancelled",

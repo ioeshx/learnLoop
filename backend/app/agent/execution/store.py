@@ -1,6 +1,7 @@
 """SQLite registry for thread mappings and replayable SSE events."""
 
 import asyncio
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -133,6 +134,38 @@ class SqliteAgentRunStore:
                 FOREIGN KEY (run_id) REFERENCES learnloop_agent_runs(run_id)
                     ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS learnloop_context_artifacts (
+                artifact_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                sha256 TEXT NOT NULL,
+                content_json TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT,
+                UNIQUE (run_id, kind, sha256),
+                FOREIGN KEY (run_id) REFERENCES learnloop_agent_runs(run_id)
+                    ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS ix_learnloop_context_artifacts_run_created
+                ON learnloop_context_artifacts (run_id, created_at);
+            CREATE TABLE IF NOT EXISTS learnloop_context_snapshots (
+                snapshot_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                plan_version INTEGER NOT NULL,
+                step_id TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                context_json TEXT,
+                observed_model_input_tokens INTEGER,
+                token_delta INTEGER,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES learnloop_agent_runs(run_id)
+                    ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS ix_learnloop_context_snapshots_run_created
+                ON learnloop_context_snapshots (run_id, created_at);
             """
         )
         await self._connection.commit()
@@ -412,6 +445,211 @@ class SqliteAgentRunStore:
             }
             for row in rows
         ]
+
+    async def save_context_artifact(
+        self,
+        run_id: str,
+        *,
+        kind: str,
+        content: object,
+        version: int = 1,
+        expires_at: datetime | None = None,
+    ) -> dict[str, object]:
+        """Persist immutable Context material and return a versioned Artifact ref.
+
+        ``run/kind/hash`` deduplication makes crash replay safe. The full bounded Tool
+        result lives here; Agent state and Trace retain only the returned provenance.
+        """
+
+        serialized = json.dumps(
+            content,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        digest = hashlib.sha256(serialized.encode()).hexdigest()
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT artifact_id, version, sha256, created_at, expires_at
+                FROM learnloop_context_artifacts
+                WHERE run_id = ? AND kind = ? AND sha256 = ?
+                """,
+                (run_id, kind, digest),
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+            if row is None:
+                artifact_id = str(uuid4())
+                created_at = datetime.now(UTC)
+                await self._connection.execute(
+                    """
+                    INSERT INTO learnloop_context_artifacts (
+                        artifact_id, run_id, kind, version, sha256, content_json,
+                        size_bytes, created_at, expires_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        artifact_id,
+                        run_id,
+                        kind,
+                        version,
+                        digest,
+                        serialized,
+                        len(serialized.encode()),
+                        created_at.isoformat(),
+                        expires_at.astimezone(UTC).isoformat()
+                        if expires_at is not None
+                        else None,
+                    ),
+                )
+                await self._connection.commit()
+                return {
+                    "artifact_id": artifact_id,
+                    "kind": kind,
+                    "version": version,
+                    "sha256": digest,
+                    "created_at": created_at.isoformat(),
+                    "expires_at": expires_at.astimezone(UTC).isoformat()
+                    if expires_at is not None
+                    else None,
+                }
+            return {
+                "artifact_id": str(row["artifact_id"]),
+                "kind": kind,
+                "version": int(row["version"]),
+                "sha256": str(row["sha256"]),
+                "created_at": str(row["created_at"]),
+                "expires_at": (
+                    str(row["expires_at"])
+                    if row["expires_at"] is not None
+                    else None
+                ),
+            }
+
+    async def get_context_artifact(
+        self, artifact_id: str
+    ) -> dict[str, object] | None:
+        cursor = await self._connection.execute(
+            "SELECT * FROM learnloop_context_artifacts WHERE artifact_id = ?",
+            (artifact_id,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        if row is None:
+            return None
+        return {
+            "artifact_id": str(row["artifact_id"]),
+            "run_id": str(row["run_id"]),
+            "kind": str(row["kind"]),
+            "version": int(row["version"]),
+            "sha256": str(row["sha256"]),
+            "content": json.loads(str(row["content_json"])),
+            "size_bytes": int(row["size_bytes"]),
+            "created_at": str(row["created_at"]),
+            "expires_at": (
+                str(row["expires_at"])
+                if row["expires_at"] is not None
+                else None
+            ),
+        }
+
+    async def save_context_snapshot(
+        self,
+        metadata: dict[str, object],
+        *,
+        context_values: dict[str, object] | None = None,
+    ) -> None:
+        """Store provenance by default and sensitive Context only in debug mode."""
+
+        async with self._write_lock:
+            await self._connection.execute(
+                """
+                INSERT INTO learnloop_context_snapshots (
+                    snapshot_id, run_id, purpose, plan_version, step_id,
+                    metadata_json, context_json, observed_model_input_tokens,
+                    token_delta, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(metadata["snapshot_id"]),
+                    str(metadata["run_id"]),
+                    str(metadata["purpose"]),
+                    int(str(metadata["plan_version"])),
+                    str(metadata["step_id"]),
+                    json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
+                    (
+                        json.dumps(
+                            context_values,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                        if context_values is not None
+                        else None
+                    ),
+                    metadata.get("observed_model_input_tokens"),
+                    metadata.get("token_delta"),
+                    str(metadata["created_at"]),
+                ),
+            )
+            await self._connection.commit()
+
+    async def record_context_token_observation(
+        self, snapshot_id: str, actual_input_tokens: int
+    ) -> None:
+        """Calibrate estimation against provider usage without exposing Prompt text."""
+
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                "SELECT metadata_json FROM learnloop_context_snapshots "
+                "WHERE snapshot_id = ?",
+                (snapshot_id,),
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+            if row is None:
+                raise LookupError(f"Context snapshot {snapshot_id} was not found")
+            metadata = json.loads(str(row["metadata_json"]))
+            estimated = int(metadata["total_input_tokens"])
+            token_delta = actual_input_tokens - estimated
+            metadata["observed_model_input_tokens"] = actual_input_tokens
+            metadata["token_delta"] = token_delta
+            await self._connection.execute(
+                """
+                UPDATE learnloop_context_snapshots
+                SET metadata_json = ?, observed_model_input_tokens = ?, token_delta = ?
+                WHERE snapshot_id = ?
+                """,
+                (
+                    json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
+                    actual_input_tokens,
+                    token_delta,
+                    snapshot_id,
+                ),
+            )
+            await self._connection.commit()
+
+    async def list_context_snapshots(
+        self, run_id: str, *, include_content: bool = False
+    ) -> list[dict[str, object]]:
+        cursor = await self._connection.execute(
+            """
+            SELECT metadata_json, context_json
+            FROM learnloop_context_snapshots
+            WHERE run_id = ? ORDER BY created_at, snapshot_id
+            """,
+            (run_id,),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        snapshots: list[dict[str, object]] = []
+        for row in rows:
+            metadata = json.loads(str(row["metadata_json"]))
+            if include_content and row["context_json"] is not None:
+                metadata["context"] = json.loads(str(row["context_json"]))
+            snapshots.append(metadata)
+        return snapshots
 
     async def append_event(
         self,

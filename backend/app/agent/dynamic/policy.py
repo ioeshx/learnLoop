@@ -13,9 +13,7 @@ from app.agent.dynamic.models import (
     AgentPlan,
     DynamicAgentState,
     ReplanProposal,
-    RunBudget,
     ToolResult,
-    ToolSpec,
 )
 from app.agent.prompts.dynamic_agent import (
     DECISION_PROMPT,
@@ -35,10 +33,7 @@ class AgentPolicy(Protocol):
     async def create_plan(
         self,
         *,
-        objective: str,
-        initial_state: dict[str, object],
-        tools: list[ToolSpec],
-        budget: RunBudget,
+        context: ContextPackage,
     ) -> PolicyResult[AgentPlan]: ...
 
     async def decide(
@@ -67,21 +62,19 @@ class ModelAgentPolicy:
     async def create_plan(
         self,
         *,
-        objective: str,
-        initial_state: dict[str, object],
-        tools: list[ToolSpec],
-        budget: RunBudget,
+        context: ContextPackage,
     ) -> PolicyResult[AgentPlan]:
+        values = context.values
         result = await self.model.generate(
             PLANNER_PROMPT,
             {
-                "objective": objective,
-                "initial_state": initial_state,
-                "available_tools": [tool.model_dump(mode="json") for tool in tools],
-                "max_steps": min(6, budget.max_steps),
+                "objective": values["objective"],
+                "initial_state": values["initial_state"],
+                "available_tools": values["available_tools"],
+                "max_steps": values["max_steps"],
             },
             AgentPlan,
-            max_output_tokens=min(4_096, budget.max_output_tokens),
+            max_output_tokens=context.snapshot.reserved_output_tokens,
         )
         return PolicyResult(result.value, result.usage)
 
@@ -92,7 +85,7 @@ class ModelAgentPolicy:
             DECISION_PROMPT,
             {"context": context.values},
             AgentAction,
-            max_output_tokens=2_048,
+            max_output_tokens=context.snapshot.reserved_output_tokens,
         )
         return PolicyResult(result.value, result.usage)
 
@@ -106,13 +99,10 @@ class ModelAgentPolicy:
         result = await self.model.generate(
             REPLAN_PROMPT,
             {
-                "context": {
-                    **context.values,
-                    "full_plan": state.plan.model_dump(mode="json"),
-                },
+                "context": context.values,
                 "failure": failure.model_dump(mode="json"),
             },
             ReplanProposal,
-            max_output_tokens=4_096,
+            max_output_tokens=context.snapshot.reserved_output_tokens,
         )
         return PolicyResult(result.value, result.usage)

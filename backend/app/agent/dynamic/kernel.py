@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from app.agent.dynamic.budget import BudgetLedger
-from app.agent.dynamic.context import MinimalContextCompiler
+from app.agent.dynamic.context import ContextCompiler, ContextPackage, ContextPurpose
 from app.agent.dynamic.models import (
     ActionType,
     AgentAction,
@@ -45,10 +45,11 @@ class DynamicAgentKernel:
         store: SqliteAgentRunStore,
         policy: AgentPolicy,
         tools: ToolExecutor,
-        context: MinimalContextCompiler,
+        context: ContextCompiler,
         verifier: DeterministicVerifier,
         budget: RunBudget,
         allow_write_tools: bool = False,
+        store_full_context: bool = False,
     ) -> None:
         self.store = store
         self.policy = policy
@@ -57,6 +58,7 @@ class DynamicAgentKernel:
         self.verifier = verifier
         self.default_budget = budget
         self.allow_write_tools = allow_write_tools
+        self.store_full_context = store_full_context
 
     async def execute(
         self, run: AgentRun, *, resume: object | None = None
@@ -82,7 +84,7 @@ class DynamicAgentKernel:
                 return
             raise RuntimeError("dynamic Agent initialization failed")
         if resume is not None:
-            state, resume_event = self._apply_resume(state, resume)
+            state, resume_event = await self._apply_resume(state, resume)
             await self._save(state)
             yield await self.store.append_event(
                 run.run_id,
@@ -133,19 +135,14 @@ class DynamicAgentKernel:
             )
             step = _step_by_id(state.plan, step.id)
             tool_specs = self._allowed_specs(step)
-            context = self.context.compile(state, step, tool_specs)
-            yield await self.store.append_event(
-                run.run_id,
-                "context_compiled",
-                node=step.id,
-                data={
-                    "estimated_tokens": context.estimated_tokens,
-                    "source_ids": list(context.source_ids),
-                    "truncated_observations": context.truncated_observations,
-                    "tool_names": [tool.name for tool in tool_specs],
-                },
+            context, context_event = await self._compile_context(
+                state, step, tool_specs, purpose=ContextPurpose.DECISION
             )
+            yield context_event
             decision = await self.policy.decide(context)
+            await self.store.record_context_token_observation(
+                context.snapshot.snapshot_id, decision.usage.input_tokens
+            )
             token_decision = ledger.record_model(decision.usage)
             state = state.model_copy(update={"usage": ledger.usage})
             if not token_decision.allowed:
@@ -242,7 +239,8 @@ class DynamicAgentKernel:
                             "Tool failures exhausted the Replanner",
                         )
                         return
-                    state, replan_event, budget_event = replanned
+                    state, context_event, replan_event, budget_event = replanned
+                    yield context_event
                     yield budget_event
                     yield replan_event
                 continue
@@ -254,7 +252,9 @@ class DynamicAgentKernel:
                     source="agent.content",
                     succeeded=True,
                     summary="Content was presented to the learner.",
-                    data={"content": action.content},
+                    data=await self._artifact_data(
+                        run.run_id, "agent_content", action.content
+                    ),
                 )
                 state = _append_observation(state, observation, succeeded=True)
                 await self._save(state)
@@ -398,12 +398,27 @@ class DynamicAgentKernel:
         title = bootstrap.output.get("knowledge_node_title", run.resource_id)
         objective = f"完成学习 Session：{title}"
         tools = self._all_specs()
+        planner_request = self.context.initial_request(
+            run.run_id,
+            objective,
+            tools,
+            self.default_budget,
+            ledger.usage,
+        )
+        planner_context = self.context.compile_initial(
+            planner_request,
+            bootstrap.output,
+            tools,
+            max_plan_steps=min(6, self.default_budget.max_steps),
+        )
+        await self._persist_context(planner_context, node="planner")
         try:
             planned = await self.policy.create_plan(
-                objective=objective,
-                initial_state=bootstrap.output,
-                tools=tools,
-                budget=self.default_budget,
+                context=planner_context,
+            )
+            await self.store.record_context_token_observation(
+                planner_context.snapshot.snapshot_id,
+                planned.usage.input_tokens,
             )
         except Exception as error:
             await self.store.append_event(
@@ -446,7 +461,9 @@ class DynamicAgentKernel:
             source="session.get_state",
             succeeded=True,
             summary="Loaded the initial Session state.",
-            data=bootstrap.output,
+            data=await self._artifact_data(
+                run.run_id, "tool_result", bootstrap.output
+            ),
         )
         state = DynamicAgentState(
             run_id=run.run_id,
@@ -537,7 +554,9 @@ class DynamicAgentKernel:
                 if result.succeeded
                 else _tool_failure_summary(tool_name, result)
             ),
-            data=_observation_data(result.output),
+            data=await self._artifact_data(
+                run.run_id, "tool_result", result.output
+            ),
             error_kind=result.error.kind if result.error else None,
         )
         state = _append_observation(state, observation, succeeded=result.succeeded)
@@ -563,7 +582,7 @@ class DynamicAgentKernel:
 
     async def _try_replan(
         self, run: AgentRun, state: DynamicAgentState
-    ) -> tuple[DynamicAgentState, AgentEvent, AgentEvent] | None:
+    ) -> tuple[DynamicAgentState, AgentEvent, AgentEvent, AgentEvent] | None:
         ledger = BudgetLedger(state.budget, state.usage)
         allowed = ledger.record_replan()
         if not allowed.allowed or not state.observations:
@@ -571,7 +590,12 @@ class DynamicAgentKernel:
         step = state.plan.ready_step()
         if step is None:
             return None
-        context = self.context.compile(state, step, self._allowed_specs(step))
+        context, context_event = await self._compile_context(
+            state,
+            step,
+            self._allowed_specs(step),
+            purpose=ContextPurpose.REPLAN,
+        )
         latest = state.observations[-1]
         failure = ToolResult(
             tool_name=latest.source,
@@ -589,6 +613,9 @@ class DynamicAgentKernel:
             return None
         proposal = await self.policy.replan(
             state=state, context=context, failure=failure
+        )
+        await self.store.record_context_token_observation(
+            context.snapshot.snapshot_id, proposal.usage.input_tokens
         )
         if not ledger.record_model(proposal.usage).allowed:
             return None
@@ -628,9 +655,9 @@ class DynamicAgentKernel:
                 "plan": revised.model_dump(mode="json"),
             },
         )
-        return state, replan_event, budget_event
+        return state, context_event, replan_event, budget_event
 
-    def _apply_resume(
+    async def _apply_resume(
         self, state: DynamicAgentState, resume: object
     ) -> tuple[DynamicAgentState, Observation]:
         pending = state.pending_interrupt
@@ -650,7 +677,11 @@ class DynamicAgentKernel:
             source="user.input",
             succeeded=True,
             summary=f"Learner supplied {pending.type} input.",
-            data={"input_type": pending.type, "value": value},
+            data=await self._artifact_data(
+                state.run_id,
+                "user_input",
+                {"input_type": pending.type, "value": value},
+            ),
         )
         state = _append_observation(state, observation, succeeded=True)
         state = state.model_copy(
@@ -660,6 +691,63 @@ class DynamicAgentKernel:
             }
         )
         return state, observation
+
+    async def _compile_context(
+        self,
+        state: DynamicAgentState,
+        step: PlanStep,
+        tools: list[ToolSpec],
+        *,
+        purpose: ContextPurpose,
+    ) -> tuple[ContextPackage, AgentEvent]:
+        """Compile, persist and expose one privacy-safe Context Snapshot.
+
+        Snapshot persistence occurs before the model call, so provider failure still
+        leaves the source selection and budget decision available for replay. Full
+        Context values are stored only behind the explicit local debug setting.
+        """
+
+        request = self.context.request_for(state, step, tools, purpose=purpose)
+        package = await self.context.compile(request, state, step, tools)
+        event = await self._persist_context(package, node=step.id)
+        return package, event
+
+    async def _persist_context(
+        self, package: ContextPackage, *, node: str
+    ) -> AgentEvent:
+        metadata = package.snapshot.model_dump(mode="json")
+        await self.store.save_context_snapshot(
+            metadata,
+            context_values=package.values if self.store_full_context else None,
+        )
+        event = await self.store.append_event(
+            package.snapshot.run_id,
+            "context_snapshot_created",
+            node=node,
+            data={
+                "snapshot_id": package.snapshot.snapshot_id,
+                "purpose": package.snapshot.purpose,
+                "estimated_tokens": package.snapshot.total_input_tokens,
+                "input_token_limit": package.snapshot.input_token_limit,
+                "reserved_output_tokens": package.snapshot.reserved_output_tokens,
+                "source_ids": package.snapshot.source_ids,
+                "omitted_source_ids": package.snapshot.omitted_source_ids,
+                "tool_names": package.snapshot.tool_names,
+                "tokenizer_name": package.snapshot.tokenizer_name,
+                "exact_token_count": package.snapshot.exact_token_count,
+            },
+        )
+        return event
+
+    async def _artifact_data(
+        self, run_id: str, kind: str, content: object
+    ) -> dict[str, object]:
+        """Move full Context material out of Agent state into an immutable Artifact."""
+
+        reference = await self.store.save_context_artifact(
+            run_id, kind=kind, content=content
+        )
+        return {"artifact": reference}
 
     def _validate_action(self, action: AgentAction, step: PlanStep) -> str | None:
         if action.plan_step_id != step.id:
@@ -865,14 +953,6 @@ def _observation_trace(observation: Observation) -> dict[str, object]:
         "error_kind": observation.error_kind,
         "created_at": observation.created_at.isoformat(),
     }
-
-
-def _observation_data(output: object) -> dict[str, object]:
-    if isinstance(output, dict):
-        return output
-    if isinstance(output, list):
-        return {"items": output}
-    return {"value": output}
 
 
 def _tool_result_summary(result: ToolResult) -> dict[str, object]:

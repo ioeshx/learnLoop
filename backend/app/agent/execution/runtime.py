@@ -58,6 +58,7 @@ class AgentRuntime:
     model: StructuredModel | None
     retention_days: int
     dynamic_kernel: DynamicAgentKernel | None
+    context_debug_enabled: bool = False
     _tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     _task_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -476,7 +477,7 @@ async def open_agent_runtime(
 ) -> AsyncGenerator[AgentRuntime, None]:
     # Local imports keep the execution package importable by dynamic submodules without
     # creating a runtime ↔ kernel circular import.
-    from app.agent.dynamic.context import MinimalContextCompiler
+    from app.agent.dynamic.context import ContextCompiler, token_counter_for
     from app.agent.dynamic.kernel import DynamicAgentKernel
     from app.agent.dynamic.models import RunBudget
     from app.agent.dynamic.policy import ModelAgentPolicy
@@ -503,8 +504,17 @@ async def open_agent_runtime(
                     store=run_store,
                     policy=ModelAgentPolicy(model),
                     tools=ToolExecutor(build_learning_tool_registry(learning_tools)),
-                    context=MinimalContextCompiler(
-                        max_context_tokens=settings.agent_context_tokens
+                    context=ContextCompiler(
+                        artifact_reader=run_store,
+                        token_counter=token_counter_for(model.provider),
+                        max_context_tokens=settings.agent_context_tokens,
+                        reserved_output_tokens=(
+                            settings.agent_context_output_reserve_tokens
+                        ),
+                        max_recent_observations=(
+                            settings.agent_context_recent_observations
+                        ),
+                        source_ttl_seconds=settings.agent_context_source_ttl_seconds,
                     ),
                     verifier=DeterministicVerifier(),
                     budget=RunBudget(
@@ -520,10 +530,12 @@ async def open_agent_runtime(
                         max_replans=settings.agent_max_replans,
                     ),
                     allow_write_tools=settings.agent_dynamic_writes_enabled,
+                    store_full_context=settings.agent_context_debug_full,
                 )
                 if model is not None
                 else None
             ),
+            context_debug_enabled=settings.agent_context_debug_full,
         )
         if model is not None:
             model.set_observer(run_store.record_model_call)

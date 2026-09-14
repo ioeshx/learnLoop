@@ -18,6 +18,14 @@ def test_port_has_clear_validation_error() -> None:
         Settings(port=70_000)
 
 
+def test_context_output_reserve_must_leave_input_capacity() -> None:
+    with pytest.raises(ValidationError, match="output_reserve_tokens"):
+        Settings(
+            agent_context_tokens=2_000,
+            agent_context_output_reserve_tokens=2_000,
+        )
+
+
 def test_database_path_is_derived_from_data_directory(tmp_path: Path) -> None:
     settings = Settings(data_dir=tmp_path / "runtime")
 

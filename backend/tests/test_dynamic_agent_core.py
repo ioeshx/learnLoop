@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -242,6 +244,8 @@ class MemoryRunStore:
         self.state: str | None = None
         self.events: list[AgentEvent] = []
         self.plans: list[tuple[int, str]] = []
+        self.artifacts: dict[str, dict[str, object]] = {}
+        self.context_snapshots: dict[str, dict[str, object]] = {}
 
     async def get(self, _: str) -> AgentRun:
         return self.run
@@ -290,6 +294,61 @@ class MemoryRunStore:
 
     async def finish_tool_call(self, **_: Any) -> None:
         return None
+
+    async def save_context_artifact(
+        self, run_id: str, *, kind: str, content: object, **_: Any
+    ) -> dict[str, object]:
+        serialized = json.dumps(
+            content,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        digest = hashlib.sha256(serialized.encode()).hexdigest()
+        artifact_id = f"artifact-{len(self.artifacts) + 1}"
+        created_at = datetime.now(UTC).isoformat()
+        self.artifacts[artifact_id] = {
+            "artifact_id": artifact_id,
+            "run_id": run_id,
+            "kind": kind,
+            "version": 1,
+            "sha256": digest,
+            "content": content,
+            "created_at": created_at,
+            "expires_at": None,
+        }
+        return {
+            "artifact_id": artifact_id,
+            "kind": kind,
+            "version": 1,
+            "sha256": digest,
+            "created_at": created_at,
+            "expires_at": None,
+        }
+
+    async def get_context_artifact(
+        self, artifact_id: str
+    ) -> dict[str, object] | None:
+        return self.artifacts.get(artifact_id)
+
+    async def save_context_snapshot(
+        self,
+        metadata: dict[str, object],
+        *,
+        context_values: dict[str, object] | None = None,
+    ) -> None:
+        stored = dict(metadata)
+        if context_values is not None:
+            stored["context"] = context_values
+        self.context_snapshots[str(metadata["snapshot_id"])] = stored
+
+    async def record_context_token_observation(
+        self, snapshot_id: str, observed_input_tokens: int
+    ) -> None:
+        self.context_snapshots[snapshot_id][
+            "observed_model_input_tokens"
+        ] = observed_input_tokens
 
 
 def _run() -> AgentRun:
@@ -346,7 +405,11 @@ def _kernel(store: MemoryRunStore, policy: ScriptedPolicy) -> DynamicAgentKernel
         store=store,  # type: ignore[arg-type]
         policy=policy,
         tools=ToolExecutor(registry),
-        context=MinimalContextCompiler(max_context_tokens=4_000),
+        context=MinimalContextCompiler(
+            artifact_reader=store,
+            max_context_tokens=4_000,
+            reserved_output_tokens=512,
+        ),
         verifier=DeterministicVerifier(),
         budget=RunBudget(),
     )
@@ -363,7 +426,14 @@ async def test_kernel_completes_a_bounded_verified_plan() -> None:
     state = DynamicAgentState.model_validate_json(store.state)
     assert state.plan.complete is True
     assert state.usage.model_calls == 5
+    assert store.context_snapshots
+    assert {item["purpose"] for item in store.context_snapshots.values()} >= {
+        "planner",
+        "decision",
+    }
+    assert all("artifact" in item.data for item in state.observations)
     assert any(event.event == "verification_completed" for event in events)
+    assert any(event.event == "context_snapshot_created" for event in events)
 
 
 @pytest.mark.asyncio

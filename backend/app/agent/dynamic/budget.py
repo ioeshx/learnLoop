@@ -36,6 +36,10 @@ class BudgetLedger:
             return self._exhausted("max_tool_calls")
         if self.usage.total_tokens >= self.budget.max_total_tokens:
             return self._exhausted("max_total_tokens")
+        if self.usage.input_tokens >= self.budget.max_input_tokens:
+            return self._exhausted("max_input_tokens")
+        if self.usage.output_tokens >= self.budget.max_output_tokens:
+            return self._exhausted("max_output_tokens")
         return BudgetDecision(allowed=True)
 
     def record_step(self) -> BudgetUsage:
