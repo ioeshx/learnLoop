@@ -13,6 +13,14 @@ from app.domain.knowledge import (
     validate_knowledge_graph,
 )
 from app.domain.mastery import MasteryEvent, MasterySnapshot
+from app.domain.memory import (
+    MemoryAggregate,
+    MemoryEvidence,
+    MemoryKind,
+    MemoryRecord,
+    MemoryRevision,
+    MemoryStatus,
+)
 from app.domain.plans import PlanItem, StudyPlan
 from app.domain.review import ReviewSchedule
 from app.domain.sessions import StudySession
@@ -34,6 +42,9 @@ class FakeState:
         default_factory=dict
     )
     reviews: dict[tuple[str, str], ReviewSchedule] = field(default_factory=dict)
+    memories: dict[str, MemoryRecord] = field(default_factory=dict)
+    memory_evidence: dict[str, MemoryEvidence] = field(default_factory=dict)
+    memory_revisions: dict[str, MemoryRevision] = field(default_factory=dict)
 
     def replace_with(self, other: "FakeState") -> None:
         copied = deepcopy(other)
@@ -255,6 +266,135 @@ class FakeReviewRepository:
         )
 
 
+class FakeMemoryRepository:
+    def __init__(self, state: FakeState) -> None:
+        self._state = state
+
+    async def add(
+        self,
+        record: MemoryRecord,
+        evidence: MemoryEvidence,
+        revision: MemoryRevision,
+    ) -> None:
+        self._state.memories[record.id] = record
+        self._state.memory_evidence[evidence.id] = evidence
+        self._state.memory_revisions[revision.id] = revision
+
+    async def get(self, memory_id: str) -> MemoryAggregate | None:
+        record = self._state.memories.get(memory_id)
+        if record is None:
+            return None
+        return self._aggregate(record)
+
+    async def list_for_user(
+        self,
+        user_id: str,
+        *,
+        status: MemoryStatus | None = None,
+        kind: MemoryKind | None = None,
+        limit: int = 100,
+    ) -> list[MemoryAggregate]:
+        records = [
+            record
+            for record in self._state.memories.values()
+            if record.user_id == user_id
+            and (status is None or record.status == status)
+            and (kind is None or record.kind == kind)
+        ]
+        records.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
+        return [self._aggregate(record) for record in records[:limit]]
+
+    async def find_by_fingerprint(
+        self, user_id: str, fingerprint: str
+    ) -> MemoryAggregate | None:
+        matches = [
+            item
+            for item in self._state.memories.values()
+            if item.user_id == user_id and item.fingerprint == fingerprint
+        ]
+        if not matches:
+            return None
+        return self._aggregate(max(matches, key=lambda item: item.updated_at))
+
+    async def find_active_by_key(
+        self, user_id: str, memory_key: str
+    ) -> MemoryAggregate | None:
+        matches = [
+            item
+            for item in self._state.memories.values()
+            if item.user_id == user_id
+            and item.memory_key == memory_key
+            and item.status == MemoryStatus.ACTIVE
+        ]
+        if not matches:
+            return None
+        return self._aggregate(max(matches, key=lambda item: item.valid_from))
+
+    async def update(self, record: MemoryRecord) -> None:
+        if record.id not in self._state.memories:
+            raise LookupError(record.id)
+        self._state.memories[record.id] = record
+
+    async def add_evidence(self, evidence: MemoryEvidence) -> None:
+        self._state.memory_evidence[evidence.id] = evidence
+
+    async def add_revision(self, revision: MemoryRevision) -> None:
+        self._state.memory_revisions[revision.id] = revision
+
+    async def delete(self, memory_id: str) -> bool:
+        if self._state.memories.pop(memory_id, None) is None:
+            return False
+        self._state.memory_evidence = {
+            key: value
+            for key, value in self._state.memory_evidence.items()
+            if value.memory_id != memory_id
+        }
+        self._state.memory_revisions = {
+            key: value
+            for key, value in self._state.memory_revisions.items()
+            if value.memory_id != memory_id
+        }
+        return True
+
+    async def expire_due(self, user_id: str, now: datetime) -> int:
+        count = 0
+        for memory_id, record in tuple(self._state.memories.items()):
+            if (
+                record.user_id == user_id
+                and record.status == MemoryStatus.ACTIVE
+                and record.expires_at is not None
+                and record.expires_at <= now
+            ):
+                self._state.memories[memory_id] = record.transition(
+                    MemoryStatus.EXPIRED, now=now
+                )
+                count += 1
+        return count
+
+    def _aggregate(self, record: MemoryRecord) -> MemoryAggregate:
+        evidence = tuple(
+            sorted(
+                (
+                    item
+                    for item in self._state.memory_evidence.values()
+                    if item.memory_id == record.id
+                ),
+                key=lambda item: (item.observed_at, item.id),
+            )
+        )
+        revisions = tuple(
+            sorted(
+                (
+                    item
+                    for item in self._state.memory_revisions.values()
+                    if item.memory_id == record.id
+                ),
+                key=lambda item: item.revision,
+            )
+        )
+        return MemoryAggregate(record=record, evidence=evidence, revisions=revisions)
+
+
 class FakeUnitOfWork:
     def __init__(self, state: FakeState) -> None:
         self._shared_state = state
@@ -268,6 +408,7 @@ class FakeUnitOfWork:
         self.sessions: FakeSessionRepository
         self.mastery: FakeMasteryRepository
         self.reviews: FakeReviewRepository
+        self.memories: FakeMemoryRepository
 
     async def __aenter__(self) -> "FakeUnitOfWork":
         state = deepcopy(self._shared_state)
@@ -280,6 +421,7 @@ class FakeUnitOfWork:
         self.sessions = FakeSessionRepository(state)
         self.mastery = FakeMasteryRepository(state)
         self.reviews = FakeReviewRepository(state)
+        self.memories = FakeMemoryRepository(state)
         return self
 
     async def __aexit__(

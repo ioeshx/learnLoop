@@ -24,6 +24,7 @@ from app.agent.dynamic.models import (
     StepStatus,
     ToolSpec,
 )
+from app.agent.memory.models import MemoryQuery, MemoryRecall
 
 
 class ContextPurpose(StrEnum):
@@ -153,6 +154,10 @@ class ContextArtifactReader(Protocol):
     ) -> dict[str, object] | None: ...
 
 
+class MemoryRetriever(Protocol):
+    async def retrieve(self, query: MemoryQuery) -> list[MemoryRecall]: ...
+
+
 class ConservativeTokenCounter:
     """Provider tokenizer 不可用时的保守 Unicode token estimation。"""
 
@@ -205,11 +210,15 @@ class ContextCompiler:
         self,
         *,
         artifact_reader: ContextArtifactReader | None = None,
+        memory_retriever: MemoryRetriever | None = None,
         token_counter: TokenCounter | None = None,
         max_context_tokens: int = 12_000,
         reserved_output_tokens: int = 2_048,
         max_recent_observations: int = 24,
         source_ttl_seconds: int = 86_400,
+        memory_enabled: bool = True,
+        memory_limit: int = 6,
+        memory_minimum_score: float = 0.24,
     ) -> None:
         if max_context_tokens < 1_000:
             raise ValueError("max_context_tokens must be at least 1000")
@@ -219,12 +228,20 @@ class ContextCompiler:
             raise ValueError("max_recent_observations must be positive")
         if source_ttl_seconds < 60:
             raise ValueError("source_ttl_seconds must be at least 60")
+        if not 1 <= memory_limit <= 20:
+            raise ValueError("memory_limit must be between 1 and 20")
+        if not 0 <= memory_minimum_score <= 1:
+            raise ValueError("memory_minimum_score must be between 0 and 1")
         self.artifact_reader = artifact_reader
+        self.memory_retriever = memory_retriever
         self.token_counter = token_counter or ConservativeTokenCounter()
         self.max_context_tokens = max_context_tokens
         self.reserved_output_tokens = reserved_output_tokens
         self.max_recent_observations = max_recent_observations
         self.source_ttl_seconds = source_ttl_seconds
+        self.memory_enabled = memory_enabled
+        self.memory_limit = memory_limit
+        self.memory_minimum_score = memory_minimum_score
 
     def request_for(
         self,
@@ -253,6 +270,12 @@ class ContextCompiler:
             purpose=purpose,
             recent_observation_ids=recent_ids,
             evidence_ids=evidence_ids,
+            memory_query=(
+                f"{state.plan.objective}\nCurrent Step: {step.objective}\n"
+                "Relevant learning preference, prior episode, and procedure"
+                if self.memory_enabled and state.user_id is not None
+                else None
+            ),
             candidate_tool_names=[item.name for item in tools],
             token_budget=token_budget,
             reserved_output_tokens=output_reserve,
@@ -434,6 +457,7 @@ class ContextCompiler:
             "usage": state.usage.model_dump(mode="json"),
             "available_tools": [_compact_tool(item) for item in selected_tools],
             "evidence": [_evidence_view(item) for item in evidence],
+            "memory": [],
             "recent_observations": [],
             "completed_steps": [],
             "conflicts": [],
@@ -446,6 +470,33 @@ class ContextCompiler:
             raise ContextBudgetError(
                 "mandatory Context partitions exceed the input token limit"
             )
+
+        memory_items = await self._retrieve_memory(request, state)
+        memory_kept, memory_omitted = self._pack_items(
+            values, "memory", memory_items, input_limit
+        )
+        values["memory"] = memory_kept
+        if memory_omitted:
+            omitted.extend(memory_omitted)
+            truncations.append(
+                ContextTruncation(
+                    partition="memory",
+                    reason="input_token_budget",
+                    omitted_source_ids=memory_omitted,
+                )
+            )
+        for item in memory_kept:
+            raw_conflicts = item.get("conflicting_memory_ids", [])
+            if isinstance(raw_conflicts, list) and raw_conflicts:
+                conflicts.append(
+                    ContextConflict(
+                        source="agent_memory",
+                        field=str(item.get("memory_key", "unknown")),
+                        source_ids=[
+                            str(item["id"]), *[str(value) for value in raw_conflicts]
+                        ],
+                    )
+                )
 
         recent_kept, recent_omitted = self._pack_items(
             values, "recent_observations", recent, input_limit
@@ -495,6 +546,7 @@ class ContextCompiler:
             for item in [*evidence, *recent_kept]
             if "id" in item
         ]
+        included_ids.extend(str(item["id"]) for item in memory_kept)
         timestamps = [
             datetime.fromisoformat(str(item["created_at"]))
             for item in [*evidence, *recent_kept]
@@ -534,6 +586,10 @@ class ContextCompiler:
                     "sources": [
                         {"id": item.get("id"), "hash": item.get("content_hash")}
                         for item in resolved
+                    ]
+                    + [
+                        {"id": item["id"], "hash": _stable_hash(item)}
+                        for item in memory_kept
                     ],
                 }
             ),
@@ -542,6 +598,54 @@ class ContextCompiler:
             coverage_end=max(timestamps) if timestamps else None,
         )
         return ContextPackage(values=values, snapshot=snapshot)
+
+    async def _retrieve_memory(
+        self, request: ContextRequest, state: DynamicAgentState
+    ) -> list[dict[str, object]]:
+        """Retrieve only Active Memory and preserve Evidence in the Context view.
+
+        Memory is an optional partition and never weakens mandatory Context or Tool
+        permission invariants.
+        """
+
+        if (
+            not self.memory_enabled
+            or self.memory_retriever is None
+            or state.user_id is None
+            or request.memory_query is None
+        ):
+            return []
+        recalls = await self.memory_retriever.retrieve(
+            MemoryQuery(
+                user_id=state.user_id,
+                text=request.memory_query,
+                goal_id=state.goal_id,
+                knowledge_node_id=state.knowledge_node_id,
+                limit=self.memory_limit,
+                minimum_score=self.memory_minimum_score,
+            )
+        )
+        return [
+            {
+                "id": f"memory:{item.memory_id}",
+                "memory_id": item.memory_id,
+                "memory_key": item.memory_key,
+                "kind": item.kind,
+                "content": item.content,
+                "attributes": item.attributes,
+                "score": item.score,
+                "confidence": item.confidence,
+                "importance": item.importance,
+                "trust": item.trust,
+                "valid_from": item.valid_from.isoformat(),
+                "expires_at": (
+                    item.expires_at.isoformat() if item.expires_at else None
+                ),
+                "evidence": item.evidence,
+                "conflicting_memory_ids": item.conflicting_memory_ids,
+            }
+            for item in recalls
+        ]
 
     def _select_tools(
         self, request: ContextRequest, step: PlanStep, tools: list[ToolSpec]
@@ -696,6 +800,7 @@ _PARTITION_PRIORITIES = {
     "usage": 100,
     "available_tools": 100,
     "evidence": 95,
+    "memory": 88,
     "recent_observations": 80,
     "completed_steps": 60,
     "conflicts": 90,

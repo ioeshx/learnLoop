@@ -363,3 +363,106 @@ class BackgroundJobModel(Base):
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+
+class MemoryRecordModel(Base):
+    """Queryable materialized state for a governed long-term Memory item."""
+
+    __tablename__ = "memory_records"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('working', 'episodic', 'semantic', 'procedural')",
+            name="memory_kind",
+        ),
+        CheckConstraint(
+            "status IN ('candidate', 'active', 'rejected', 'expired')",
+            name="memory_status",
+        ),
+        CheckConstraint(
+            "trust IN ('untrusted', 'user_asserted', 'verified', 'system')",
+            name="memory_trust",
+        ),
+        CheckConstraint(
+            "sensitivity IN ('normal', 'personal', 'sensitive')",
+            name="memory_sensitivity",
+        ),
+        CheckConstraint(
+            "confidence >= 0 AND confidence <= 1", name="memory_confidence_range"
+        ),
+        CheckConstraint(
+            "importance >= 0 AND importance <= 1", name="memory_importance_range"
+        ),
+        Index("ix_memory_user_status_kind", "user_id", "status", "kind"),
+        Index("ix_memory_user_key_status", "user_id", "memory_key", "status"),
+        Index("ix_memory_goal_node_status", "goal_id", "knowledge_node_id", "status"),
+        Index("ix_memory_user_fingerprint", "user_id", "fingerprint"),
+    )
+
+    id: Mapped[str] = mapped_column(String(UUID_LENGTH), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(30))
+    content: Mapped[str] = mapped_column(Text)
+    attributes: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    memory_key: Mapped[str] = mapped_column(String(300))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    confidence: Mapped[float] = mapped_column(Float)
+    importance: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(30))
+    trust: Mapped[str] = mapped_column(String(30))
+    sensitivity: Mapped[str] = mapped_column(String(30))
+    requires_approval: Mapped[bool] = mapped_column(Boolean)
+    goal_id: Mapped[str | None] = mapped_column(
+        ForeignKey("learning_goals.id", ondelete="CASCADE"), nullable=True
+    )
+    knowledge_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("knowledge_nodes.id", ondelete="CASCADE"), nullable=True
+    )
+    valid_from: Mapped[datetime] = mapped_column(UTCDateTime())
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    supersedes_id: Mapped[str | None] = mapped_column(
+        ForeignKey("memory_records.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+
+class MemoryEvidenceModel(Base):
+    __tablename__ = "memory_evidence"
+    __table_args__ = (
+        Index("ix_memory_evidence_memory_observed", "memory_id", "observed_at"),
+        Index("ix_memory_evidence_source", "source_type", "source_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(UUID_LENGTH), primary_key=True)
+    memory_id: Mapped[str] = mapped_column(
+        ForeignKey("memory_records.id", ondelete="CASCADE"), index=True
+    )
+    source_type: Mapped[str] = mapped_column(String(80))
+    source_id: Mapped[str] = mapped_column(String(200))
+    excerpt: Mapped[str] = mapped_column(Text)
+    trust: Mapped[str] = mapped_column(String(30))
+    observed_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    run_id: Mapped[str | None] = mapped_column(String(UUID_LENGTH), nullable=True)
+    session_id: Mapped[str | None] = mapped_column(String(UUID_LENGTH), nullable=True)
+    attempt_id: Mapped[str | None] = mapped_column(String(UUID_LENGTH), nullable=True)
+
+
+class MemoryRevisionModel(Base):
+    __tablename__ = "memory_revisions"
+    __table_args__ = (
+        UniqueConstraint("memory_id", "revision"),
+        CheckConstraint("revision > 0", name="memory_revision_positive"),
+    )
+
+    id: Mapped[str] = mapped_column(String(UUID_LENGTH), primary_key=True)
+    memory_id: Mapped[str] = mapped_column(
+        ForeignKey("memory_records.id", ondelete="CASCADE"), index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer)
+    previous_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_content: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(String(500))
+    actor: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime())

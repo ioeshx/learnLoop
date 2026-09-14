@@ -19,6 +19,7 @@ from app.agent.dynamic.models import (
     PlanStep,
     RunBudget,
     StepStatus,
+    ToolError,
     ToolErrorKind,
     ToolResult,
     ToolSpec,
@@ -29,6 +30,8 @@ from app.agent.dynamic.tools import ToolExecutor
 from app.agent.dynamic.verifier import DeterministicVerifier, apply_replan
 from app.agent.execution.models import AgentEvent, AgentRun
 from app.agent.execution.store import SqliteAgentRunStore
+from app.agent.memory import MemoryService
+from app.application.services import DEFAULT_USER_ID
 
 
 class DynamicAgentKernel:
@@ -48,6 +51,7 @@ class DynamicAgentKernel:
         context: ContextCompiler,
         verifier: DeterministicVerifier,
         budget: RunBudget,
+        memory: MemoryService | None = None,
         allow_write_tools: bool = False,
         store_full_context: bool = False,
     ) -> None:
@@ -57,6 +61,7 @@ class DynamicAgentKernel:
         self.context = context
         self.verifier = verifier
         self.default_budget = budget
+        self.memory = memory
         self.allow_write_tools = allow_write_tools
         self.store_full_context = store_full_context
 
@@ -116,6 +121,9 @@ class DynamicAgentKernel:
             step = state.plan.ready_step()
             if step is None:
                 if state.plan.complete:
+                    memory_event = await self._capture_completed_memory(state)
+                    if memory_event is not None:
+                        yield memory_event
                     yield await self._terminate(
                         run.run_id, "completed", state.final_summary
                     )
@@ -335,6 +343,9 @@ class DynamicAgentKernel:
                 if final.status == VerificationStatus.PASSED:
                     state = state.model_copy(update={"final_summary": action.content})
                     await self._save(state)
+                    memory_event = await self._capture_completed_memory(state)
+                    if memory_event is not None:
+                        yield memory_event
                     yield await self._terminate(run.run_id, "completed", action.content)
                     return
                 state = _record_failure(state)
@@ -467,6 +478,12 @@ class DynamicAgentKernel:
         )
         state = DynamicAgentState(
             run_id=run.run_id,
+            user_id=DEFAULT_USER_ID,
+            session_id=run.resource_id,
+            goal_id=_optional_string(bootstrap.output.get("goal_id")),
+            knowledge_node_id=_optional_string(
+                bootstrap.output.get("knowledge_node_id")
+            ),
             plan=plan,
             budget=self.default_budget,
             usage=ledger.usage,
@@ -600,12 +617,12 @@ class DynamicAgentKernel:
         failure = ToolResult(
             tool_name=latest.source,
             succeeded=False,
-            error={
-                "kind": latest.error_kind or ToolErrorKind.PERMANENT,
-                "message": latest.summary,
-                "retryable": latest.error_kind
+            error=ToolError(
+                kind=latest.error_kind or ToolErrorKind.PERMANENT,
+                message=latest.summary,
+                retryable=latest.error_kind
                 in {ToolErrorKind.TRANSIENT, ToolErrorKind.TIMEOUT},
-            },
+            ),
             duration_ms=0,
         )
         token_check = ledger.preflight("model")
@@ -789,6 +806,55 @@ class DynamicAgentKernel:
             data=state.usage.model_dump(mode="json"),
         )
 
+    async def _capture_completed_memory(
+        self, state: DynamicAgentState
+    ) -> AgentEvent | None:
+        """Persist verified Episodic Memory at the Run lifecycle boundary.
+
+        Memory persistence is a secondary durable projection. A database failure is
+        recorded but cannot retroactively invalidate a Plan already accepted by the
+        Verifier; exact fingerprints make a later replay idempotent.
+        """
+
+        if self.memory is None or state.user_id is None or state.session_id is None:
+            return None
+        try:
+            outcome = await self.memory.capture_run_outcome(
+                user_id=state.user_id,
+                run_id=state.run_id,
+                session_id=state.session_id,
+                goal_id=state.goal_id,
+                knowledge_node_id=state.knowledge_node_id,
+                objective=state.plan.objective,
+                summary=state.final_summary,
+                completed_step_ids=[
+                    step.id
+                    for step in state.plan.steps
+                    if step.status == StepStatus.COMPLETED
+                ],
+            )
+            return await self.store.append_event(
+                state.run_id,
+                "memory_extracted",
+                data={
+                    "status": "succeeded",
+                    "action": outcome.action,
+                    "memory_id": outcome.aggregate.record.id,
+                    "memory_status": outcome.aggregate.record.status,
+                    "reason": outcome.reason,
+                },
+            )
+        except Exception as error:  # pragma: no cover - operational isolation
+            return await self.store.append_event(
+                state.run_id,
+                "memory_extracted",
+                data={
+                    "status": "failed",
+                    "error_type": type(error).__name__,
+                    "message": str(error)[:1_000],
+                },
+            )
+
     async def _terminate(
         self, run_id: str, reason: str, detail: str | None = None
     ) -> AgentEvent:
@@ -967,3 +1033,7 @@ def _tool_result_summary(result: ToolResult) -> dict[str, object]:
 def _tool_failure_summary(tool_name: str, result: ToolResult) -> str:
     message = result.error.message if result.error is not None else "unknown"
     return f"{tool_name} failed: {message}"
+
+
+def _optional_string(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None

@@ -62,6 +62,9 @@ class Settings(BaseSettings):
         default=86_400, ge=60, le=31_536_000
     )
     agent_context_debug_full: bool = False
+    agent_memory_enabled: bool = True
+    agent_memory_recall_limit: int = Field(default=6, ge=1, le=20)
+    agent_memory_minimum_score: float = Field(default=0.24, ge=0, le=1)
     embedding_provider: Literal["local", "openai_compatible"] = "local"
     embedding_model: str = "text-embedding-3-small"
     embedding_api_key: SecretStr | None = None

@@ -483,6 +483,7 @@ async def open_agent_runtime(
     from app.agent.dynamic.policy import ModelAgentPolicy
     from app.agent.dynamic.tools import ToolExecutor, build_learning_tool_registry
     from app.agent.dynamic.verifier import DeterministicVerifier
+    from app.agent.memory import MemoryService
 
     settings.ensure_runtime_directories()
     learning_tools = LearningTools(dependencies)
@@ -491,6 +492,9 @@ async def open_agent_runtime(
     ) as checkpointer:
         await checkpointer.setup()
         run_store = await SqliteAgentRunStore.open(settings.checkpoint_path)
+        memory_service = MemoryService(
+            dependencies.uow_factory, clock=dependencies.clock
+        )
         runtime = AgentRuntime(
             checkpointer=checkpointer,
             run_store=run_store,
@@ -506,6 +510,7 @@ async def open_agent_runtime(
                     tools=ToolExecutor(build_learning_tool_registry(learning_tools)),
                     context=ContextCompiler(
                         artifact_reader=run_store,
+                        memory_retriever=memory_service,
                         token_counter=token_counter_for(model.provider),
                         max_context_tokens=settings.agent_context_tokens,
                         reserved_output_tokens=(
@@ -515,8 +520,14 @@ async def open_agent_runtime(
                             settings.agent_context_recent_observations
                         ),
                         source_ttl_seconds=settings.agent_context_source_ttl_seconds,
+                        memory_enabled=settings.agent_memory_enabled,
+                        memory_limit=settings.agent_memory_recall_limit,
+                        memory_minimum_score=(
+                            settings.agent_memory_minimum_score
+                        ),
                     ),
                     verifier=DeterministicVerifier(),
+                    memory=memory_service,
                     budget=RunBudget(
                         max_steps=settings.agent_max_steps,
                         max_model_calls=settings.agent_max_model_calls,

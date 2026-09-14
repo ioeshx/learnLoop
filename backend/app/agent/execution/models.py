@@ -37,6 +37,7 @@ EventKind = Literal[
     "verification_completed",
     "context_compiled",
     "context_snapshot_created",
+    "memory_extracted",
     "budget_updated",
     "run_paused",
     "run_cancelled",

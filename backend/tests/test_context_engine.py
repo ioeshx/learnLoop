@@ -28,6 +28,8 @@ from app.agent.dynamic.models import (
     ToolSpec,
 )
 from app.agent.execution.store import SqliteAgentRunStore
+from app.agent.memory.models import MemoryQuery, MemoryRecall
+from app.domain.memory import MemoryKind, MemoryTrust
 
 
 def _hash(value: object) -> str:
@@ -49,6 +51,32 @@ class ArtifactReader:
         self, artifact_id: str
     ) -> dict[str, object] | None:
         return self.values.get(artifact_id)
+
+
+class MemoryRetriever:
+    def __init__(self) -> None:
+        self.queries: list[MemoryQuery] = []
+
+    async def retrieve(self, query: MemoryQuery) -> list[MemoryRecall]:
+        self.queries.append(query)
+        return [
+            MemoryRecall(
+                memory_id="memory-1",
+                memory_key="preference:format",
+                kind=MemoryKind.SEMANTIC,
+                content="Learner prefers examples before definitions.",
+                attributes={"profile_change": True},
+                score=0.88,
+                confidence=1.0,
+                importance=0.8,
+                trust=MemoryTrust.USER_ASSERTED,
+                goal_id=None,
+                knowledge_node_id=None,
+                valid_from=datetime.now(UTC),
+                expires_at=None,
+                evidence=[{"source_type": "user_correction", "source_id": "ui"}],
+            )
+        ]
 
 
 def _tool(name: str = "state.read") -> ToolSpec:
@@ -129,6 +157,33 @@ async def test_compiler_preserves_mandatory_partitions_and_reports_eviction() ->
         for item in package.snapshot.truncations
     )
     assert package.snapshot.input_hash != package.snapshot.output_hash
+
+
+@pytest.mark.asyncio
+async def test_active_memory_is_a_traceable_optional_context_partition() -> None:
+    retriever = MemoryRetriever()
+    state, step = _state([])
+    state = state.model_copy(
+        update={
+            "user_id": "user-1",
+            "goal_id": "goal-1",
+            "knowledge_node_id": "node-1",
+        }
+    )
+    compiler = ContextCompiler(memory_retriever=retriever, memory_enabled=True)
+
+    package = await compiler.compile(
+        compiler.request_for(state, step, [_tool()]), state, step, [_tool()]
+    )
+
+    assert retriever.queries[0].goal_id == "goal-1"
+    assert package.values["memory"][0]["memory_id"] == "memory-1"
+    assert "memory:memory-1" in package.snapshot.source_ids
+    memory_partition = next(
+        item for item in package.snapshot.partitions if item.name == "memory"
+    )
+    assert memory_partition.mandatory is False
+    assert memory_partition.item_count == 1
 
 
 @pytest.mark.asyncio

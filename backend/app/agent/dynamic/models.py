@@ -295,6 +295,10 @@ class DynamicAgentState(AgentContract):
     """Kernel 的 durable state；每个 action 后整体保存，支持跨进程 resume。"""
 
     run_id: str
+    user_id: str | None = None
+    session_id: str | None = None
+    goal_id: str | None = None
+    knowledge_node_id: str | None = None
     plan: AgentPlan
     budget: RunBudget
     usage: BudgetUsage

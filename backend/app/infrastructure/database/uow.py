@@ -9,6 +9,7 @@ from app.infrastructure.database.repositories import (
     SqlAlchemyKnowledgeRepository,
     SqlAlchemyLearningGoalRepository,
     SqlAlchemyMasteryRepository,
+    SqlAlchemyMemoryRepository,
     SqlAlchemyReviewRepository,
     SqlAlchemyStudyPlanRepository,
     SqlAlchemyStudySessionRepository,
@@ -28,6 +29,7 @@ class SqlAlchemyUnitOfWork:
         self.sessions: SqlAlchemyStudySessionRepository
         self.mastery: SqlAlchemyMasteryRepository
         self.reviews: SqlAlchemyReviewRepository
+        self.memories: SqlAlchemyMemoryRepository
 
     async def __aenter__(self) -> "SqlAlchemyUnitOfWork":
         self.session = self._session_factory()
@@ -39,6 +41,7 @@ class SqlAlchemyUnitOfWork:
         self.sessions = SqlAlchemyStudySessionRepository(self.session)
         self.mastery = SqlAlchemyMasteryRepository(self.session)
         self.reviews = SqlAlchemyReviewRepository(self.session)
+        self.memories = SqlAlchemyMemoryRepository(self.session)
         return self
 
     async def __aexit__(

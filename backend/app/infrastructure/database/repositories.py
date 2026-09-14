@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.exercises.models import Exercise, ExerciseAttempt, ExerciseType
@@ -10,6 +10,16 @@ from app.domain.goals.models import GoalStatus, LearningGoal
 from app.domain.knowledge.graph import validate_knowledge_graph
 from app.domain.knowledge.models import KnowledgeEdge, KnowledgeNode, RelationType
 from app.domain.mastery.models import MasteryEvent, MasteryEventType, MasterySnapshot
+from app.domain.memory import (
+    MemoryAggregate,
+    MemoryEvidence,
+    MemoryKind,
+    MemoryRecord,
+    MemoryRevision,
+    MemorySensitivity,
+    MemoryStatus,
+    MemoryTrust,
+)
 from app.domain.plans.models import (
     PlanItem,
     PlanItemStatus,
@@ -31,6 +41,9 @@ from app.infrastructure.database.models import (
     LearningGoalModel,
     MasteryEventModel,
     MasterySnapshotModel,
+    MemoryEvidenceModel,
+    MemoryRecordModel,
+    MemoryRevisionModel,
     PlanItemModel,
     ReviewScheduleModel,
     StudyPlanModel,
@@ -434,6 +447,142 @@ class SqlAlchemyReviewRepository:
         return [_review_schedule_from_model(model) for model in result]
 
 
+class SqlAlchemyMemoryRepository:
+    """Relational aggregate repository for Memory, Evidence, and Revision rows."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(
+        self,
+        record: MemoryRecord,
+        evidence: MemoryEvidence,
+        revision: MemoryRevision,
+    ) -> None:
+        await self._session.flush()
+        self._session.add(_memory_to_model(record))
+        await self._session.flush()
+        self._session.add(_memory_evidence_to_model(evidence))
+        self._session.add(_memory_revision_to_model(revision))
+
+    async def get(self, memory_id: str) -> MemoryAggregate | None:
+        model = await self._session.get(MemoryRecordModel, memory_id)
+        if model is None:
+            return None
+        return await self._aggregate(model)
+
+    async def list_for_user(
+        self,
+        user_id: str,
+        *,
+        status: MemoryStatus | None = None,
+        kind: MemoryKind | None = None,
+        limit: int = 100,
+    ) -> list[MemoryAggregate]:
+        statement = select(MemoryRecordModel).where(
+            MemoryRecordModel.user_id == user_id
+        )
+        if status is not None:
+            statement = statement.where(MemoryRecordModel.status == status.value)
+        if kind is not None:
+            statement = statement.where(MemoryRecordModel.kind == kind.value)
+        models = await self._session.scalars(
+            statement.order_by(
+                MemoryRecordModel.updated_at.desc(), MemoryRecordModel.id
+            ).limit(limit)
+        )
+        return [await self._aggregate(model) for model in models]
+
+    async def find_by_fingerprint(
+        self, user_id: str, fingerprint: str
+    ) -> MemoryAggregate | None:
+        model = await self._session.scalar(
+            select(MemoryRecordModel)
+            .where(
+                MemoryRecordModel.user_id == user_id,
+                MemoryRecordModel.fingerprint == fingerprint,
+            )
+            .order_by(MemoryRecordModel.updated_at.desc())
+            .limit(1)
+        )
+        return await self._aggregate(model) if model is not None else None
+
+    async def find_active_by_key(
+        self, user_id: str, memory_key: str
+    ) -> MemoryAggregate | None:
+        model = await self._session.scalar(
+            select(MemoryRecordModel)
+            .where(
+                MemoryRecordModel.user_id == user_id,
+                MemoryRecordModel.memory_key == memory_key,
+                MemoryRecordModel.status == MemoryStatus.ACTIVE.value,
+            )
+            .order_by(MemoryRecordModel.valid_from.desc())
+            .limit(1)
+        )
+        return await self._aggregate(model) if model is not None else None
+
+    async def update(self, record: MemoryRecord) -> None:
+        model = await self._session.get(MemoryRecordModel, record.id)
+        if model is None:
+            raise LookupError(record.id)
+        model.content = record.content
+        model.attributes = dict(record.attributes)
+        model.fingerprint = record.fingerprint
+        model.confidence = record.confidence
+        model.importance = record.importance
+        model.status = record.status.value
+        model.trust = record.trust.value
+        model.sensitivity = record.sensitivity.value
+        model.requires_approval = record.requires_approval
+        model.valid_from = record.valid_from
+        model.expires_at = record.expires_at
+        model.supersedes_id = record.supersedes_id
+        model.updated_at = record.updated_at
+
+    async def add_evidence(self, evidence: MemoryEvidence) -> None:
+        self._session.add(_memory_evidence_to_model(evidence))
+
+    async def add_revision(self, revision: MemoryRevision) -> None:
+        self._session.add(_memory_revision_to_model(revision))
+
+    async def delete(self, memory_id: str) -> bool:
+        result = await self._session.execute(
+            delete(MemoryRecordModel).where(MemoryRecordModel.id == memory_id)
+        )
+        return bool(getattr(result, "rowcount", 0))
+
+    async def expire_due(self, user_id: str, now: datetime) -> int:
+        result = await self._session.execute(
+            update(MemoryRecordModel)
+            .where(
+                MemoryRecordModel.user_id == user_id,
+                MemoryRecordModel.status == MemoryStatus.ACTIVE.value,
+                MemoryRecordModel.expires_at.is_not(None),
+                MemoryRecordModel.expires_at <= now,
+            )
+            .values(status=MemoryStatus.EXPIRED.value, updated_at=now)
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    async def _aggregate(self, model: MemoryRecordModel) -> MemoryAggregate:
+        evidence = await self._session.scalars(
+            select(MemoryEvidenceModel)
+            .where(MemoryEvidenceModel.memory_id == model.id)
+            .order_by(MemoryEvidenceModel.observed_at, MemoryEvidenceModel.id)
+        )
+        revisions = await self._session.scalars(
+            select(MemoryRevisionModel)
+            .where(MemoryRevisionModel.memory_id == model.id)
+            .order_by(MemoryRevisionModel.revision)
+        )
+        return MemoryAggregate(
+            record=_memory_from_model(model),
+            evidence=tuple(_memory_evidence_from_model(item) for item in evidence),
+            revisions=tuple(_memory_revision_from_model(item) for item in revisions),
+        )
+
+
 def _user_from_model(model: UserModel) -> User:
     return User(
         id=model.id,
@@ -594,4 +743,110 @@ def _review_schedule_from_model(model: ReviewScheduleModel) -> ReviewSchedule:
         card_json=model.card_json,
         due_at=model.due_at,
         last_review_at=model.last_review_at,
+    )
+
+
+def _memory_to_model(memory: MemoryRecord) -> MemoryRecordModel:
+    return MemoryRecordModel(
+        id=memory.id,
+        user_id=memory.user_id,
+        kind=memory.kind.value,
+        content=memory.content,
+        attributes=dict(memory.attributes),
+        memory_key=memory.memory_key,
+        fingerprint=memory.fingerprint,
+        confidence=memory.confidence,
+        importance=memory.importance,
+        status=memory.status.value,
+        trust=memory.trust.value,
+        sensitivity=memory.sensitivity.value,
+        requires_approval=memory.requires_approval,
+        goal_id=memory.goal_id,
+        knowledge_node_id=memory.knowledge_node_id,
+        valid_from=memory.valid_from,
+        expires_at=memory.expires_at,
+        supersedes_id=memory.supersedes_id,
+        created_at=memory.created_at,
+        updated_at=memory.updated_at,
+    )
+
+
+def _memory_from_model(model: MemoryRecordModel) -> MemoryRecord:
+    return MemoryRecord(
+        id=model.id,
+        user_id=model.user_id,
+        kind=MemoryKind(model.kind),
+        content=model.content,
+        attributes=dict(model.attributes),
+        memory_key=model.memory_key,
+        fingerprint=model.fingerprint,
+        confidence=model.confidence,
+        importance=model.importance,
+        status=MemoryStatus(model.status),
+        trust=MemoryTrust(model.trust),
+        sensitivity=MemorySensitivity(model.sensitivity),
+        requires_approval=model.requires_approval,
+        goal_id=model.goal_id,
+        knowledge_node_id=model.knowledge_node_id,
+        valid_from=model.valid_from,
+        expires_at=model.expires_at,
+        supersedes_id=model.supersedes_id,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+def _memory_evidence_to_model(evidence: MemoryEvidence) -> MemoryEvidenceModel:
+    return MemoryEvidenceModel(
+        id=evidence.id,
+        memory_id=evidence.memory_id,
+        source_type=evidence.source_type,
+        source_id=evidence.source_id,
+        excerpt=evidence.excerpt,
+        trust=evidence.trust.value,
+        observed_at=evidence.observed_at,
+        run_id=evidence.run_id,
+        session_id=evidence.session_id,
+        attempt_id=evidence.attempt_id,
+    )
+
+
+def _memory_evidence_from_model(model: MemoryEvidenceModel) -> MemoryEvidence:
+    return MemoryEvidence(
+        id=model.id,
+        memory_id=model.memory_id,
+        source_type=model.source_type,
+        source_id=model.source_id,
+        excerpt=model.excerpt,
+        trust=MemoryTrust(model.trust),
+        observed_at=model.observed_at,
+        run_id=model.run_id,
+        session_id=model.session_id,
+        attempt_id=model.attempt_id,
+    )
+
+
+def _memory_revision_to_model(revision: MemoryRevision) -> MemoryRevisionModel:
+    return MemoryRevisionModel(
+        id=revision.id,
+        memory_id=revision.memory_id,
+        revision=revision.revision,
+        previous_content=revision.previous_content,
+        new_content=revision.new_content,
+        reason=revision.reason,
+        actor=revision.actor,
+        created_at=revision.created_at,
+    )
+
+
+def _memory_revision_from_model(model: MemoryRevisionModel) -> MemoryRevision:
+    return MemoryRevision(
+        id=model.id,
+        memory_id=model.memory_id,
+        revision=model.revision,
+        previous_content=model.previous_content,
+        new_content=model.new_content,
+        reason=model.reason,
+        actor=model.actor,
+        created_at=model.created_at,
     )

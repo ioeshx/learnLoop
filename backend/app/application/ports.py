@@ -8,6 +8,7 @@ from app.domain.exercises.repository import ExerciseRepository
 from app.domain.goals.repository import LearningGoalRepository
 from app.domain.knowledge.repository import KnowledgeRepository
 from app.domain.mastery.repository import MasteryRepository
+from app.domain.memory.repository import MemoryRepository
 from app.domain.plans.repository import StudyPlanRepository
 from app.domain.resources import ResourceCitation
 from app.domain.review.repository import ReviewRepository
@@ -45,6 +46,9 @@ class UnitOfWork(Protocol):
 
     @property
     def reviews(self) -> ReviewRepository: ...
+
+    @property
+    def memories(self) -> MemoryRepository: ...
 
     async def __aenter__(self) -> Self: ...
 
