@@ -107,9 +107,16 @@ async def get_agent_run_state(
 
 @router.get("/runs/{run_id}/trace", response_model=AgentTraceResponse)
 async def get_agent_trace(
-    run_id: str, runtime: AgentRuntimeDep
+    run_id: str,
+    runtime: AgentRuntimeDep,
+    include_context: Annotated[bool, Query()] = False,
 ) -> AgentTraceResponse:
     run = await _get_run(runtime, run_id)
+    if include_context and not runtime.context_debug_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="full Context inspection is disabled",
+        )
     events = await runtime.run_store.list_events(run.run_id)
     tool_calls = await runtime.run_store.list_tool_calls(run.run_id)
     model_calls = await runtime.run_store.list_model_calls(run.run_id)
@@ -128,6 +135,9 @@ async def get_agent_trace(
         total_tool_duration_ms=sum(call.duration_ms or 0.0 for call in tool_calls),
         dynamic_state=(json.loads(stored_state) if stored_state is not None else None),
         plan_versions=await runtime.run_store.list_plan_versions(run.run_id),
+        context_snapshots=await runtime.run_store.list_context_snapshots(
+            run.run_id, include_content=include_context
+        ),
     )
 
 

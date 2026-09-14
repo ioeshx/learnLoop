@@ -193,6 +193,11 @@ async def test_agent_sse_stream_replays_and_resumes(
             assert trace.json()["tool_calls"]
             assert trace.json()["total_tool_duration_ms"] >= 0
 
+            private_trace = await client.get(
+                f"/api/v1/agent/runs/{run_id}/trace?include_context=true"
+            )
+            assert private_trace.status_code == 403
+
             duplicate = await client.post(
                 f"/api/v1/agent/runs/{run_id}/resume",
                 json={"value": {"action": "accept"}},

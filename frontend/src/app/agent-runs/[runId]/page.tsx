@@ -10,6 +10,7 @@ export default function AgentTracePage() {
   const { runId } = useParams<{ runId: string }>();
   const [trace, setTrace] = useState<AgentTrace | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const latestContext = trace?.context_snapshots.at(-1);
 
   useEffect(() => {
     let active = true;
@@ -83,6 +84,59 @@ export default function AgentTracePage() {
                   </small>
                 </div>
               ))}
+            </section>
+          ) : null}
+
+          {latestContext ? (
+            <section className="dashboard-card">
+              <p className="eyebrow">
+                Context Engine · {trace.context_snapshots.length} Snapshots
+              </p>
+              <h2>
+                {latestContext.purpose} · Plan v{latestContext.plan_version} · {latestContext.step_id}
+              </h2>
+              <div className="metric-grid compact-metrics">
+                <Metric
+                  label="Input Token"
+                  value={`${latestContext.total_input_tokens}/${latestContext.input_token_limit}`}
+                />
+                <Metric
+                  label="Output Reserve"
+                  value={latestContext.reserved_output_tokens}
+                />
+                <Metric label="来源" value={latestContext.source_ids.length} />
+                <Metric
+                  label="裁剪来源"
+                  value={latestContext.omitted_source_ids.length}
+                />
+              </div>
+              <p className="page-subtitle">
+                Tokenizer: {latestContext.tokenizer_name}
+                {latestContext.exact_token_count ? "（exact）" : "（fallback estimate）"}
+                {latestContext.token_delta === null
+                  ? ""
+                  : ` · Provider delta ${latestContext.token_delta}`}
+              </p>
+              {latestContext.partitions.map((partition) => (
+                <div className="trace-row" key={partition.name}>
+                  <strong>
+                    {partition.name} · {partition.token_count} tokens
+                  </strong>
+                  <span>
+                    priority {partition.priority} · {partition.item_count} items
+                  </span>
+                  <small>{partition.mandatory ? "mandatory" : "optional"}</small>
+                </div>
+              ))}
+              <p className="page-subtitle">
+                Tools: {latestContext.tool_names.join("、") || "无"}
+                {latestContext.truncations.length
+                  ? ` · Compaction: ${latestContext.truncations.map((item) => item.reason).join("、")}`
+                  : ""}
+                {latestContext.conflicts.length
+                  ? ` · Conflicts: ${latestContext.conflicts.length}`
+                  : ""}
+              </p>
             </section>
           ) : null}
 

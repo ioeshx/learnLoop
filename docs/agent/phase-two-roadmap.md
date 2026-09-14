@@ -28,7 +28,8 @@
 - [主要研究方向](research-and-industry-directions.md)
 - [LearnLoop 应用设计](learnloop-application-design.md)
 - [第二阶段详细实施计划](phase-two-implementation-plan.md)
-- [Stage 11 Dynamic Agent Kernel 实现说明](phase-eleven-dynamic-agent-kernel.md)
+- [Stage 11 Dynamic Agent Kernel 实现说明](stage-11-dynamic-agent-kernel.md)
+- [Stage 12 Context Engine 实现说明](stage-12-context-engine.md)
 - [推荐论文阅读清单](paper-reading-list.md)
 
 本路线图描述能力顺序和阶段目标；具体里程碑、代码改动、迁移策略、测试门禁和首批 Backlog

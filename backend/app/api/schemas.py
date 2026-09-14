@@ -494,6 +494,7 @@ class AgentTraceResponse(BaseModel):
     total_tool_duration_ms: float
     dynamic_state: dict[str, object] | None = None
     plan_versions: list[dict[str, object]] = Field(default_factory=list)
+    context_snapshots: list[dict[str, object]] = Field(default_factory=list)
 
 
 class ResumeAgentRunRequest(RequestModel):

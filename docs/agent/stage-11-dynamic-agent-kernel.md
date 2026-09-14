@@ -64,7 +64,7 @@ AgentRuntime ─────────────── engine_version ──
                            │                              │
              ┌─────────────┼──────────────┐               │
              ▼             ▼              ▼               │
-       ModelAgentPolicy  BudgetLedger  MinimalContextCompiler
+       ModelAgentPolicy  BudgetLedger  ContextCompiler
        Planner/Executor       │              │
        Replanner              │              ▼
              │                │        selected Tool Schema
@@ -200,6 +200,10 @@ Stage 11 的 `MinimalContextCompiler` 仅编译：
 
 它提供保守 Token estimation、Observation 裁剪计数和 source id。完整 tokenizer、compaction、
 Artifact 和 source mapping 属于 Stage 12，当前实现没有越界假装完成这些能力。
+
+> 后续状态：上述 Stage 11 最小实现已在 Stage 12 升级为完整 `ContextCompiler`，包括
+> Artifact、Compaction、Token partition 和 Context Snapshot。参见
+> [Stage 12 Context Engine 实现说明](stage-12-context-engine.md)。
 
 ## 5. Stage 11C：Verifier、Replanner、Interrupt 与写入
 

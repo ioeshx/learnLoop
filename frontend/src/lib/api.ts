@@ -138,6 +138,7 @@ export type AgentEventKind =
   | "observation_recorded"
   | "verification_completed"
   | "context_compiled"
+  | "context_snapshot_created"
   | "budget_updated"
   | "run_paused"
   | "run_cancelled";
@@ -208,6 +209,47 @@ export type AgentTrace = {
     plan: DynamicAgentPlan;
     created_at: string;
   }>;
+  context_snapshots: ContextSnapshot[];
+};
+
+export type ContextSnapshot = {
+  snapshot_id: string;
+  run_id: string;
+  purpose: "planner" | "decision" | "replan";
+  plan_version: number;
+  step_id: string;
+  token_budget: number;
+  reserved_output_tokens: number;
+  input_token_limit: number;
+  total_input_tokens: number;
+  tokenizer_name: string;
+  exact_token_count: boolean;
+  partitions: Array<{
+    name: string;
+    priority: number;
+    mandatory: boolean;
+    token_count: number;
+    item_count: number;
+  }>;
+  source_ids: string[];
+  omitted_source_ids: string[];
+  tool_names: string[];
+  truncations: Array<{
+    partition: string;
+    reason: string;
+    omitted_source_ids: string[];
+  }>;
+  conflicts: Array<{
+    source: string;
+    field: string;
+    source_ids: string[];
+  }>;
+  compaction_version: number;
+  input_hash: string;
+  output_hash: string;
+  observed_model_input_tokens: number | null;
+  token_delta: number | null;
+  created_at: string;
 };
 
 export type DynamicAgentPlan = {
