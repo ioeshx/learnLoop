@@ -101,6 +101,35 @@ async def test_markdown_resource_is_deduplicated_searchable_and_recycled(
             assert citations[0]["locator"] == "图算法：基础与边界"
             assert "先进先出" in citations[0]["excerpt"]
 
+            researched = await client.post(
+                "/api/v1/research/runs",
+                json={
+                    "question": "BFS 为什么使用队列",
+                    "goal_id": goal_id,
+                    "knowledge_node_id": node_id,
+                    "mode_override": "single_retrieval",
+                },
+            )
+            assert researched.status_code == 201
+            research = researched.json()
+            assert research["status"] == "completed"
+            assert research["mode"] == "single_retrieval"
+            assert research["citations"][0]["chunk_id"] == citations[0]["chunk_id"]
+            assert "[1]" in research["answer"]
+
+            trace = await client.get(
+                f"/api/v1/research/runs/{research['trace_id']}"
+            )
+            assert trace.status_code == 200
+            assert trace.json()["queries"][0]["text"] == "BFS 为什么使用队列"
+            assert trace.json()["evidence"][0]["resource_sha256"] == resource["sha256"]
+            listed_research = await client.get(
+                "/api/v1/research/runs", params={"goal_id": goal_id}
+            )
+            assert [item["id"] for item in listed_research.json()] == [
+                research["trace_id"]
+            ]
+
             unsupported = await client.get(
                 "/api/v1/resources/search",
                 params={

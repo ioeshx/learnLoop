@@ -27,6 +27,7 @@ EXPECTED_TABLES = {
     "memory_records",
     "memory_evidence",
     "memory_revisions",
+    "research_runs",
 }
 
 
@@ -54,6 +55,6 @@ def test_upgrade_creates_the_initial_schema(tmp_path: Path) -> None:
         busy_timeout = connection.execute("PRAGMA busy_timeout").fetchone()
 
     assert {row[0] for row in table_rows} >= EXPECTED_TABLES
-    assert version == ("0007_agent_memory",)
+    assert version == ("0008_agentic_research",)
     assert journal_mode == ("wal",)
     assert busy_timeout == (5000,)

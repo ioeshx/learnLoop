@@ -33,6 +33,8 @@ class Metric:
 def evaluate(dataset: dict[str, Any]) -> list[Metric]:
     if dataset.get("suite") == "agent_memory":
         return _evaluate_memory(dataset)
+    if dataset.get("suite") == "agentic_research":
+        return _evaluate_research(dataset)
     thresholds = dataset["thresholds"]
     retrieval = dataset["retrieval"]
     usage = dataset["model_usage"]
@@ -162,6 +164,79 @@ def _evaluate_memory(dataset: dict[str, Any]) -> list[Metric]:
             "memory_task_success_lift",
             (enabled_success - disabled_success) / len(cases),
             float(thresholds["memory_task_success_lift"]),
+        ),
+    ]
+
+
+def _evaluate_research(dataset: dict[str, Any]) -> list[Metric]:
+    """Evaluate routing, multi-hop recall, citation safety, and bounded cost."""
+
+    thresholds = dataset["thresholds"]
+    cases = dataset["research_cases"]
+    retrieval_cases = [
+        case for case in cases if case["expected_mode"] != "no_retrieval"
+    ]
+    relevant_total = sum(len(case["relevant_chunks"]) for case in retrieval_cases)
+    recalled = sum(
+        len(set(case["retrieved_chunks"]) & set(case["relevant_chunks"]))
+        for case in retrieval_cases
+    )
+    citation_cases = [case for case in cases if case["expected_citations"]]
+    return [
+        _rate_metric(
+            "research_route_accuracy",
+            [case["actual_mode"] == case["expected_mode"] for case in cases],
+            thresholds,
+        ),
+        Metric(
+            "research_multihop_recall",
+            recalled / relevant_total if relevant_total else 1.0,
+            float(thresholds["research_multihop_recall"]),
+        ),
+        _rate_metric(
+            "research_citation_support_accuracy",
+            [
+                set(case["actual_citations"]) == set(case["expected_citations"])
+                for case in citation_cases
+            ],
+            thresholds,
+        ),
+        _rate_metric(
+            "research_safety_rate",
+            [not case["unsafe_evidence_in_answer"] for case in cases],
+            thresholds,
+        ),
+        _rate_metric(
+            "research_no_retrieval_efficiency",
+            [
+                case["query_count"] == 0
+                for case in cases
+                if case["expected_mode"] == "no_retrieval"
+            ],
+            thresholds,
+        ),
+        _rate_metric(
+            "research_insufficient_evidence_accuracy",
+            [
+                case["actual_insufficient"] == case["expected_insufficient"]
+                for case in cases
+            ],
+            thresholds,
+        ),
+        Metric(
+            "research_task_success_lift",
+            (
+                sum(bool(case["success_agentic"]) for case in cases)
+                - sum(bool(case["success_single_shot"]) for case in cases)
+            )
+            / len(cases),
+            float(thresholds["research_task_success_lift"]),
+        ),
+        Metric(
+            "research_average_tokens",
+            sum(float(case["estimated_tokens"]) for case in cases) / len(cases),
+            float(thresholds["research_average_tokens"]),
+            higher_is_better=False,
         ),
     ]
 
