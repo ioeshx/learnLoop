@@ -139,6 +139,7 @@ export type AgentEventKind =
   | "verification_completed"
   | "context_compiled"
   | "context_snapshot_created"
+  | "memory_extracted"
   | "budget_updated"
   | "run_paused"
   | "run_cancelled";
@@ -370,6 +371,48 @@ export type BackgroundJob = {
 export type ResourceImportResult = {
   resource: LearningResource;
   job: BackgroundJob;
+};
+
+export type AgentMemory = {
+  id: string;
+  user_id: string;
+  kind: "working" | "episodic" | "semantic" | "procedural";
+  content: string;
+  attributes: Record<string, unknown>;
+  memory_key: string;
+  confidence: number;
+  importance: number;
+  status: "candidate" | "active" | "rejected" | "expired";
+  trust: "untrusted" | "user_asserted" | "verified" | "system";
+  sensitivity: "normal" | "personal" | "sensitive";
+  requires_approval: boolean;
+  goal_id: string | null;
+  knowledge_node_id: string | null;
+  valid_from: string;
+  expires_at: string | null;
+  supersedes_id: string | null;
+  evidence: Array<{
+    id: string;
+    source_type: string;
+    source_id: string;
+    excerpt: string;
+    trust: string;
+    observed_at: string;
+    run_id: string | null;
+    session_id: string | null;
+    attempt_id: string | null;
+  }>;
+  revisions: Array<{
+    id: string;
+    revision: number;
+    previous_content: string | null;
+    new_content: string;
+    reason: string;
+    actor: string;
+    created_at: string;
+  }>;
+  created_at: string;
+  updated_at: string;
 };
 
 const API_BASE_URL =
@@ -604,6 +647,50 @@ export function searchResources(
 export async function deleteResource(resourceId: string): Promise<void> {
   await checkedResponse(
     await fetch(`${API_BASE_URL}/resources/${resourceId}`, { method: "DELETE" }),
+  );
+}
+
+export function fetchMemories(
+  memoryStatus?: AgentMemory["status"],
+): Promise<AgentMemory[]> {
+  const query = memoryStatus
+    ? `?memory_status=${encodeURIComponent(memoryStatus)}`
+    : "";
+  return apiRequest<AgentMemory[]>(`/memories${query}`);
+}
+
+export function approveMemory(memoryId: string): Promise<AgentMemory> {
+  return apiRequest<AgentMemory>(`/memories/${memoryId}/approve`, {
+    method: "POST",
+  });
+}
+
+export function rejectMemory(memoryId: string): Promise<AgentMemory> {
+  return apiRequest<AgentMemory>(`/memories/${memoryId}/reject`, {
+    method: "POST",
+  });
+}
+
+export function deactivateMemory(memoryId: string): Promise<AgentMemory> {
+  return apiRequest<AgentMemory>(`/memories/${memoryId}/deactivate`, {
+    method: "POST",
+  });
+}
+
+export function correctMemory(
+  memoryId: string,
+  content: string,
+  reason: string,
+): Promise<AgentMemory> {
+  return apiRequest<AgentMemory>(`/memories/${memoryId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ content, reason }),
+  });
+}
+
+export async function deleteMemory(memoryId: string): Promise<void> {
+  await checkedResponse(
+    await fetch(`${API_BASE_URL}/memories/${memoryId}`, { method: "DELETE" }),
   );
 }
 
