@@ -415,6 +415,71 @@ export type AgentMemory = {
   updated_at: string;
 };
 
+export type EvidenceGrade = {
+  relevance: number;
+  source_quality: number;
+  duplicate_score: number;
+  coverage: number;
+  verdict:
+    | "accepted"
+    | "low_relevance"
+    | "low_quality"
+    | "duplicate"
+    | "prompt_injection";
+  reason: string;
+};
+
+export type ResearchEvidence = {
+  id: string;
+  query_id: string;
+  subquestion_id: string;
+  resource_id: string;
+  chunk_id: string;
+  title: string;
+  excerpt: string;
+  page_number: number | null;
+  section: string | null;
+  source_uri: string | null;
+  resource_version: string;
+  resource_sha256: string;
+  content_sha256: string;
+  trust: "untrusted";
+  grade: EvidenceGrade;
+};
+
+export type ResearchResult = {
+  trace_id: string;
+  mode: "no_retrieval" | "single_retrieval" | "multi_step_research";
+  status: "completed" | "insufficient_evidence" | "failed";
+  answer: string;
+  claims: Array<{
+    id: string;
+    text: string;
+    importance: "critical" | "supporting";
+    citation_status: "supported" | "partially_supported" | "unsupported";
+    included_in_answer: boolean;
+  }>;
+  citations: Array<{
+    id: string;
+    claim_id: string;
+    evidence_id: string;
+    resource_id: string;
+    chunk_id: string;
+    status: "supported" | "partially_supported" | "unsupported";
+    explanation: string;
+  }>;
+  evidence: ResearchEvidence[];
+  gaps: string[];
+  usage: {
+    rounds: number;
+    queries: number;
+    sources: number;
+    read_chars: number;
+    estimated_tokens: number;
+    stopped_reason: string | null;
+  };
+};
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
 
@@ -692,6 +757,21 @@ export async function deleteMemory(memoryId: string): Promise<void> {
   await checkedResponse(
     await fetch(`${API_BASE_URL}/memories/${memoryId}`, { method: "DELETE" }),
   );
+}
+
+export function startResearch(
+  question: string,
+  goalId: string,
+  knowledgeNodeId?: string,
+): Promise<ResearchResult> {
+  return apiRequest<ResearchResult>("/research/runs", {
+    method: "POST",
+    body: JSON.stringify({
+      question,
+      goal_id: goalId,
+      knowledge_node_id: knowledgeNodeId || null,
+    }),
+  });
 }
 
 export function fetchAgentRun(runId: string): Promise<AgentRun> {

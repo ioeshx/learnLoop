@@ -172,7 +172,7 @@ function ResourceWorkspace() {
     <main className="page-shell narrow-shell">
       <nav className="page-nav">
         <Link href="/">← 返回首页</Link>
-        <span>个人资料库</span>
+        <Link href="/research">打开 Research Tutor →</Link>
       </nav>
 
       <p className="eyebrow">LOCAL-FIRST · HYBRID RAG</p>
