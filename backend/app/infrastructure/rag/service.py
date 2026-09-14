@@ -83,7 +83,7 @@ class RagService:
     ) -> LearningResource:
         """校验归属、原子保存文件并创建待处理元数据，不执行耗时解析和索引。"""
 
-        await self._validate_scope(goal_id, knowledge_node_id)
+        await self.validate_scope(goal_id, knowledge_node_id)
         stored = self._storage.save(source)
         duplicate = await self._store.find_duplicate(
             goal_id=goal_id,
@@ -135,7 +135,7 @@ class RagService:
     ) -> LearningResource:
         """安全抓取网页、保存原文并创建待处理元数据，供后台任务后续索引。"""
 
-        await self._validate_scope(goal_id, knowledge_node_id)
+        await self.validate_scope(goal_id, knowledge_node_id)
         page = await self._web_fetcher.fetch(url)
         stored = self._storage.save(io.BytesIO(page.content))
         duplicate = await self._store.find_duplicate(
@@ -233,7 +233,7 @@ class RagService:
         normalized_query = query.strip()
         if not normalized_query:
             raise ValueError("resource search query must not be empty")
-        await self._validate_scope(goal_id, knowledge_node_id)
+        await self.validate_scope(goal_id, knowledge_node_id)
         embedding = await self._embeddings.embed_query(normalized_query)
         return await self._store.hybrid_search(
             query=normalized_query,
@@ -304,7 +304,7 @@ class RagService:
             raise RuntimeError("indexed learning resource disappeared")
         return indexed
 
-    async def _validate_scope(
+    async def validate_scope(
         self, goal_id: str, knowledge_node_id: str | None
     ) -> None:
         async with self._uow_factory() as uow:

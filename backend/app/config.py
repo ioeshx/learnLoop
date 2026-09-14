@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     agent_memory_enabled: bool = True
     agent_memory_recall_limit: int = Field(default=6, ge=1, le=20)
     agent_memory_minimum_score: float = Field(default=0.24, ge=0, le=1)
+    research_max_rounds: int = Field(default=3, ge=1, le=8)
+    research_max_queries: int = Field(default=8, ge=1, le=30)
+    research_max_sources: int = Field(default=12, ge=1, le=50)
+    research_max_read_chars: int = Field(default=30_000, ge=1_000, le=200_000)
+    research_max_context_tokens: int = Field(default=8_000, ge=500, le=50_000)
     embedding_provider: Literal["local", "openai_compatible"] = "local"
     embedding_model: str = "text-embedding-3-small"
     embedding_api_key: SecretStr | None = None

@@ -5,6 +5,7 @@ from typing import Annotated, cast
 from fastapi import Depends, Request
 
 from app.agent.execution import AgentRuntime
+from app.agent.research import ResearchTutor
 from app.application.services import ApplicationDependencies
 from app.infrastructure.rag import RagService
 from app.workers import JobService
@@ -24,6 +25,13 @@ async def get_agent_runtime(request: Request) -> AgentRuntime:
 
 
 AgentRuntimeDep = Annotated[AgentRuntime, Depends(get_agent_runtime)]
+
+
+async def get_research_tutor(request: Request) -> ResearchTutor:
+    return cast(ResearchTutor, request.app.state.research_tutor)
+
+
+ResearchTutorDep = Annotated[ResearchTutor, Depends(get_research_tutor)]
 
 
 async def get_rag_service(request: Request) -> RagService:

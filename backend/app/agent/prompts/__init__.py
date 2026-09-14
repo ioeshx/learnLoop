@@ -14,6 +14,7 @@ from app.agent.prompts.misconception_diagnosis import (
     MISCONCEPTION_DIAGNOSIS_PROMPT,
 )
 from app.agent.prompts.models import PromptInput, PromptTemplate, RenderedPrompt
+from app.agent.prompts.research import RESEARCH_SYNTHESIS_PROMPT
 from app.agent.prompts.study_plan import STUDY_PLAN_PROMPT
 
 PROMPT_CATALOG = (
@@ -27,6 +28,7 @@ PROMPT_CATALOG = (
     EXERCISE_PROMPT,
     ANSWER_EVALUATION_PROMPT,
     MISCONCEPTION_DIAGNOSIS_PROMPT,
+    RESEARCH_SYNTHESIS_PROMPT,
 )
 
 __all__ = [
@@ -37,6 +39,7 @@ __all__ = [
     "LESSON_PROMPT",
     "MISCONCEPTION_DIAGNOSIS_PROMPT",
     "PROMPT_CATALOG",
+    "RESEARCH_SYNTHESIS_PROMPT",
     "STUDY_PLAN_PROMPT",
     "PromptInput",
     "PromptTemplate",

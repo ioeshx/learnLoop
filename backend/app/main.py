@@ -10,6 +10,9 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agent.execution import open_agent_runtime
+from app.agent.research import ResearchTutor, SqliteResearchStore
+from app.agent.research.models import ResearchBudget
+from app.agent.research.synthesis import ModelResearchSynthesizer
 from app.api.router import api_router
 from app.application import ApplicationDependencies
 from app.application.services import DEFAULT_USER_ID
@@ -57,6 +60,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         resource_store: SqliteResourceStore | None = None
         job_store: SqliteJobStore | None = None
         rag_service: RagService | None = None
+        research_store: SqliteResearchStore | None = None
         curriculum_generator = None
         if resolved_settings.llm_provider == "deepseek":
             api_key = resolved_settings.llm_api_key
@@ -116,6 +120,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 chunk_overlap=resolved_settings.resource_chunk_overlap,
             )
             lifespan_app.state.rag_service = rag_service
+            research_store = await SqliteResearchStore.open(
+                resolved_settings.database_path
+            )
+            research_tutor = ResearchTutor(
+                rag=rag_service,
+                store=research_store,
+                clock=utc_now,
+                default_budget=ResearchBudget(
+                    max_rounds=resolved_settings.research_max_rounds,
+                    max_queries=resolved_settings.research_max_queries,
+                    max_sources=resolved_settings.research_max_sources,
+                    max_read_chars=resolved_settings.research_max_read_chars,
+                    max_context_tokens=(
+                        resolved_settings.research_max_context_tokens
+                    ),
+                ),
+                synthesizer=(
+                    ModelResearchSynthesizer(structured_model)
+                    if structured_model is not None
+                    else None
+                ),
+            )
+            lifespan_app.state.research_tutor = research_tutor
             lifespan_app.state.job_service = JobService(
                 store=job_store,
                 clock=utc_now,
@@ -134,7 +161,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             lifespan_app.state.application_dependencies = application_dependencies
             async with open_agent_runtime(
-                resolved_settings, application_dependencies, structured_model
+                resolved_settings,
+                application_dependencies,
+                structured_model,
+                research_tutor,
             ) as agent_runtime:
                 lifespan_app.state.agent_runtime = agent_runtime
                 yield
@@ -145,6 +175,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await resource_store.close()
             if job_store is not None:
                 await job_store.close()
+            if research_store is not None:
+                await research_store.close()
             if remote_embedding is not None:
                 await remote_embedding.aclose()
             if model_provider is not None:

@@ -20,6 +20,7 @@ from app.agent.dynamic.models import (
     ToolRisk,
     ToolSpec,
 )
+from app.agent.research import ResearchTutor
 from app.agent.tools import LearningTools
 from app.application.errors import ApplicationError
 
@@ -56,6 +57,12 @@ class GradeExerciseInput(ToolInput):
 
 class ScheduleReviewInput(ToolInput):
     due_at: str = Field(min_length=1)
+
+
+class ResearchInput(ToolInput):
+    question: str = Field(min_length=1, max_length=4_000)
+    goal_id: str = Field(min_length=1)
+    knowledge_node_id: str | None = None
 
 
 ToolHandler = Callable[[BaseModel, str], Awaitable[object]]
@@ -229,7 +236,9 @@ class ToolExecutor:
         )
 
 
-def build_learning_tool_registry(tools: LearningTools) -> ToolRegistry:
+def build_learning_tool_registry(
+    tools: LearningTools, research: ResearchTutor | None = None
+) -> ToolRegistry:
     registry = ToolRegistry()
 
     async def goal_state(value: BaseModel, _: str) -> object:
@@ -270,6 +279,47 @@ def build_learning_tool_registry(tools: LearningTools) -> ToolRegistry:
         await tools.complete_study_session(parsed.session_id)
         return {"session_id": parsed.session_id, "status": "completed"}
 
+    async def ask_research(value: BaseModel, _: str) -> object:
+        if research is None:
+            raise RuntimeError("Research Tutor is not configured")
+        parsed = ResearchInput.model_validate(value)
+        result = await research.run(
+            research.request_for(
+                parsed.question,
+                goal_id=parsed.goal_id,
+                knowledge_node_id=parsed.knowledge_node_id,
+            )
+        )
+        # The durable Research Trace keeps every rejected Chunk for audit. The Tool
+        # boundary deliberately projects only accepted Evidence into Agent Context,
+        # so low-quality or prompt-injection text cannot become an Observation.
+        accepted_evidence = [
+            item
+            for item in result.evidence
+            if item.grade.verdict.value == "accepted"
+        ]
+        return {
+            "trace_id": result.trace_id,
+            "mode": result.mode.value,
+            "status": result.status,
+            "answer": result.answer,
+            "claims": [
+                item.model_dump(mode="json")
+                for item in result.claims
+                if item.included_in_answer
+            ],
+            "citations": [
+                item.model_dump(mode="json")
+                for item in result.citations
+                if item.status.value != "unsupported"
+            ],
+            "evidence": [
+                item.model_dump(mode="json") for item in accepted_evidence
+            ],
+            "gaps": result.gaps,
+            "usage": result.usage.model_dump(mode="json"),
+        }
+
     registry.register(
         name="goal.get_state",
         description="Read a learning goal and its constraints.",
@@ -295,6 +345,17 @@ def build_learning_tool_registry(tools: LearningTools) -> ToolRegistry:
         handler=search,
         max_result_chars=12_000,
     )
+    if research is not None:
+        registry.register(
+            name="research.ask",
+            description=(
+                "Run bounded multi-step research over local learner resources and "
+                "return verified Claim-to-Chunk citations."
+            ),
+            input_type=ResearchInput,
+            handler=ask_research,
+            max_result_chars=20_000,
+        )
     registry.register(
         name="exercise.get",
         description="Read the exercise already bound to the current Session.",

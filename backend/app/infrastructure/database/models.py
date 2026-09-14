@@ -466,3 +466,39 @@ class MemoryRevisionModel(Base):
     reason: Mapped[str] = mapped_column(String(500))
     actor: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+
+class ResearchRunModel(Base):
+    """Relational envelope around an atomic Agentic RAG Trace graph."""
+
+    __tablename__ = "research_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "retrieval_mode IN ('no_retrieval', 'single_retrieval', "
+            "'multi_step_research')",
+            name="research_retrieval_mode",
+        ),
+        CheckConstraint(
+            "status IN ('completed', 'insufficient_evidence', 'failed')",
+            name="research_status",
+        ),
+        Index("ix_research_user_created", "user_id", "created_at"),
+        Index("ix_research_goal_created", "goal_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(UUID_LENGTH), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    goal_id: Mapped[str] = mapped_column(
+        ForeignKey("learning_goals.id", ondelete="CASCADE"), index=True
+    )
+    knowledge_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("knowledge_nodes.id", ondelete="SET NULL"), nullable=True
+    )
+    question: Mapped[str] = mapped_column(Text)
+    retrieval_mode: Mapped[str] = mapped_column(String(30))
+    status: Mapped[str] = mapped_column(String(30))
+    trace_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    completed_at: Mapped[datetime] = mapped_column(UTCDateTime())

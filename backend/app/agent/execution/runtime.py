@@ -33,6 +33,7 @@ from app.observability import bind_agent_run, reset_agent_run
 
 if TYPE_CHECKING:
     from app.agent.dynamic.kernel import DynamicAgentKernel
+    from app.agent.research import ResearchTutor
 
 _INITIAL = object()
 logger = logging.getLogger(__name__)
@@ -474,6 +475,7 @@ async def open_agent_runtime(
     settings: Settings,
     dependencies: ApplicationDependencies,
     model: StructuredModel | None,
+    research_tutor: ResearchTutor | None = None,
 ) -> AsyncGenerator[AgentRuntime, None]:
     # Local imports keep the execution package importable by dynamic submodules without
     # creating a runtime ↔ kernel circular import.
@@ -507,7 +509,9 @@ async def open_agent_runtime(
                 DynamicAgentKernel(
                     store=run_store,
                     policy=ModelAgentPolicy(model),
-                    tools=ToolExecutor(build_learning_tool_registry(learning_tools)),
+                    tools=ToolExecutor(
+                        build_learning_tool_registry(learning_tools, research_tutor)
+                    ),
                     context=ContextCompiler(
                         artifact_reader=run_store,
                         memory_retriever=memory_service,
