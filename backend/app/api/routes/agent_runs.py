@@ -121,6 +121,12 @@ async def get_agent_trace(
     tool_calls = await runtime.run_store.list_tool_calls(run.run_id)
     model_calls = await runtime.run_store.list_model_calls(run.run_id)
     stored_state = await runtime.run_store.load_dynamic_state(run.run_id)
+    children = await runtime.run_store.list_children(run.run_id)
+    delegations = (
+        await runtime.delegation.list_for_parent(run.run_id)
+        if runtime.delegation is not None
+        else []
+    )
     return AgentTraceResponse(
         run=AgentRunResponse.from_execution(run),
         events=[AgentEventResponse.from_execution(event) for event in events],
@@ -138,6 +144,8 @@ async def get_agent_trace(
         context_snapshots=await runtime.run_store.list_context_snapshots(
             run.run_id, include_content=include_context
         ),
+        delegations=delegations,
+        child_runs=[AgentRunResponse.from_execution(child) for child in children],
     )
 
 
@@ -147,6 +155,26 @@ async def cancel_agent_run(
 ) -> AgentRunResponse:
     run = await _get_run(runtime, run_id)
     return AgentRunResponse.from_execution(await runtime.cancel_run(run))
+
+
+@router.get("/runs/{run_id}/children")
+async def list_agent_child_runs(
+    run_id: str, runtime: AgentRuntimeDep
+) -> dict[str, object]:
+    await _get_run(runtime, run_id)
+    children = await runtime.run_store.list_children(run_id)
+    delegations = (
+        await runtime.delegation.list_for_parent(run_id)
+        if runtime.delegation is not None
+        else []
+    )
+    return {
+        "runs": [
+            AgentRunResponse.from_execution(child).model_dump(mode="json")
+            for child in children
+        ],
+        "delegations": [item.model_dump(mode="json") for item in delegations],
+    }
 
 
 @router.get("/runs/{run_id}/plans")

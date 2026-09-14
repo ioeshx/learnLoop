@@ -43,6 +43,14 @@ export default function AgentTracePage() {
           {trace.run.terminal_reason ? (
             <p className="page-subtitle">终止原因：{trace.run.terminal_reason}</p>
           ) : null}
+          {trace.run.parent_run_id ? (
+            <p className="page-subtitle">
+              Parent Run：
+              <Link href={`/agent-runs/${trace.run.parent_run_id}`}>
+                {trace.run.parent_run_id}
+              </Link>
+            </p>
+          ) : null}
           <section className="metric-grid compact-metrics">
             <Metric label="事件" value={trace.events.length} />
             <Metric label="Tool 调用" value={trace.tool_calls.length} />
@@ -74,6 +82,10 @@ export default function AgentTracePage() {
                   label="Replan"
                   value={`${trace.dynamic_state.usage.replans}/${trace.dynamic_state.budget.max_replans}`}
                 />
+                <Metric
+                  label="Delegated Token"
+                  value={trace.dynamic_state.usage.delegated_tokens ?? 0}
+                />
               </div>
               {trace.dynamic_state.plan.steps.map((step) => (
                 <div className="trace-row" key={step.id}>
@@ -82,6 +94,36 @@ export default function AgentTracePage() {
                   <small>
                     Tools: {step.allowed_tools.join("、") || "无"} · Evidence: {step.evidence_ids.length}
                   </small>
+                </div>
+              ))}
+            </section>
+          ) : null}
+
+          {trace.delegations.length ? (
+            <section className="dashboard-card">
+              <p className="eyebrow">SUBAGENT-AS-TOOL</p>
+              <h2>Delegation Tree</h2>
+              {trace.delegations.map((delegation) => (
+                <div className="trace-row" key={delegation.request.id}>
+                  <strong>
+                    {delegation.request.role} · {delegation.status}
+                  </strong>
+                  <span>{delegation.request.objective}</span>
+                  <small>
+                    Budget {delegation.result?.usage.used_tokens ?? 0}/
+                    {delegation.request.budget.allocated_tokens} tokens · Queries{" "}
+                    {delegation.result?.usage.queries ?? 0}/
+                    {delegation.request.budget.max_queries}
+                  </small>
+                  <Link href={`/agent-runs/${delegation.child_run_id}`}>
+                    查看 Child Run →
+                  </Link>
+                  {delegation.result?.unresolved_questions.length ? (
+                    <small>
+                      Unresolved：
+                      {delegation.result.unresolved_questions.join("；")}
+                    </small>
+                  ) : null}
                 </div>
               ))}
             </section>

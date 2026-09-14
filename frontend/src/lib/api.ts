@@ -142,7 +142,12 @@ export type AgentEventKind =
   | "memory_extracted"
   | "budget_updated"
   | "run_paused"
-  | "run_cancelled";
+  | "run_cancelled"
+  | "delegation_started"
+  | "delegation_completed"
+  | "delegation_failed"
+  | "delegation_cancelled"
+  | "delegation_reused";
 
 export type AgentEvent = {
   run_id: string;
@@ -156,7 +161,7 @@ export type AgentEvent = {
 export type AgentRun = {
   run_id: string;
   thread_id: string;
-  graph: "daily_learning" | "goal_planning";
+  graph: "daily_learning" | "goal_planning" | "researcher";
   resource_id: string;
   engine_version: "fixed_v1" | "dynamic_v2";
   parent_run_id: string | null;
@@ -166,6 +171,57 @@ export type AgentRun = {
   cancel_requested: boolean;
   version: number;
   created_at: string;
+  updated_at: string;
+};
+
+export type DelegationRecord = {
+  request: {
+    id: string;
+    parent_run_id: string;
+    plan_step_id: string;
+    role: "researcher" | "curriculum" | "tutor" | "evaluator";
+    objective: string;
+    goal_id: string;
+    knowledge_node_id: string | null;
+    allowed_tools: string[];
+    budget: {
+      allocated_tokens: number;
+      max_queries: number;
+      max_sources: number;
+      deadline_seconds: number;
+    };
+    fingerprint: string;
+    created_at: string;
+  };
+  child_run_id: string;
+  status:
+    | "running"
+    | "completed"
+    | "insufficient_evidence"
+    | "failed"
+    | "cancelled"
+    | "deadline_exceeded";
+  result: {
+    summary: string;
+    unresolved_questions: string[];
+    usage: {
+      allocated_tokens: number;
+      used_tokens: number;
+      queries: number;
+      sources: number;
+      duration_ms: number;
+    };
+    claims: Array<{ id: string; text: string; citation_status: string }>;
+    evidence: Array<{
+      id: string;
+      resource_id: string;
+      chunk_id: string;
+      title: string;
+      locator: string;
+      excerpt: string;
+      content_sha256: string;
+    }>;
+  } | null;
   updated_at: string;
 };
 
@@ -211,6 +267,8 @@ export type AgentTrace = {
     created_at: string;
   }>;
   context_snapshots: ContextSnapshot[];
+  delegations: DelegationRecord[];
+  child_runs: AgentRun[];
 };
 
 export type ContextSnapshot = {
@@ -275,6 +333,7 @@ export type DynamicAgentState = {
     model_calls: number;
     tool_calls: number;
     total_tokens: number;
+    delegated_tokens: number;
     replans: number;
   };
   budget: {

@@ -5,6 +5,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.types import JsonValue
 
+from app.agent.delegation import DelegationRecord
 from app.agent.execution import AgentEvent, AgentRun
 from app.agent.execution.models import ModelCallTrace, ToolCallTrace
 from app.application.models import (
@@ -495,6 +496,8 @@ class AgentTraceResponse(BaseModel):
     dynamic_state: dict[str, object] | None = None
     plan_versions: list[dict[str, object]] = Field(default_factory=list)
     context_snapshots: list[dict[str, object]] = Field(default_factory=list)
+    delegations: list[DelegationRecord] = Field(default_factory=list)
+    child_runs: list[AgentRunResponse] = Field(default_factory=list)
 
 
 class ResumeAgentRunRequest(RequestModel):
