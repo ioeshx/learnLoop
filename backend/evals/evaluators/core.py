@@ -31,6 +31,8 @@ class Metric:
 
 
 def evaluate(dataset: dict[str, Any]) -> list[Metric]:
+    if dataset.get("suite") == "agent_memory":
+        return _evaluate_memory(dataset)
     thresholds = dataset["thresholds"]
     retrieval = dataset["retrieval"]
     usage = dataset["model_usage"]
@@ -103,6 +105,63 @@ def evaluate(dataset: dict[str, Any]) -> list[Metric]:
             sum(float(case["cost_usd"]) for case in usage) / len(usage),
             float(thresholds["model_cost_average_usd"]),
             higher_is_better=False,
+        ),
+    ]
+
+
+def _evaluate_memory(dataset: dict[str, Any]) -> list[Metric]:
+    """Evaluate LongMemEval-style recall, update, safety, and forgetting cases."""
+
+    thresholds = dataset["thresholds"]
+    cases = dataset["memory_cases"]
+    recall_cases = [case for case in cases if case["category"] != "write_safety"]
+    abstention_cases = [
+        case for case in recall_cases if not case["expected_memory_ids"]
+    ]
+    write_cases = [case for case in cases if case["category"] == "write_safety"]
+    expected_total = sum(len(case["expected_memory_ids"]) for case in recall_cases)
+    recalled_expected = sum(
+        len(set(case["actual_memory_ids"]) & set(case["expected_memory_ids"]))
+        for case in recall_cases
+    )
+    false_recalled = sum(
+        len(set(case["actual_memory_ids"]) - set(case["expected_memory_ids"]))
+        for case in recall_cases
+    )
+    retrieved_total = sum(len(case["actual_memory_ids"]) for case in recall_cases)
+    enabled_success = sum(bool(case["task_success_with_memory"]) for case in cases)
+    disabled_success = sum(bool(case["task_success_without_memory"]) for case in cases)
+    return [
+        Metric(
+            "memory_recall_accuracy",
+            recalled_expected / expected_total if expected_total else 1.0,
+            float(thresholds["memory_recall_accuracy"]),
+        ),
+        Metric(
+            "memory_abstention_rate",
+            sum(not case["actual_memory_ids"] for case in abstention_cases)
+            / len(abstention_cases),
+            float(thresholds["memory_abstention_rate"]),
+        ),
+        Metric(
+            "memory_write_safety_rate",
+            sum(
+                case["actual_status"] == case["expected_status"]
+                for case in write_cases
+            )
+            / len(write_cases),
+            float(thresholds["memory_write_safety_rate"]),
+        ),
+        Metric(
+            "memory_false_recall_rate",
+            false_recalled / retrieved_total if retrieved_total else 0.0,
+            float(thresholds["memory_false_recall_rate"]),
+            higher_is_better=False,
+        ),
+        Metric(
+            "memory_task_success_lift",
+            (enabled_success - disabled_success) / len(cases),
+            float(thresholds["memory_task_success_lift"]),
         ),
     ]
 
