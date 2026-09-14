@@ -166,6 +166,26 @@ class SqliteAgentRunStore:
             );
             CREATE INDEX IF NOT EXISTS ix_learnloop_context_snapshots_run_created
                 ON learnloop_context_snapshots (run_id, created_at);
+            CREATE TABLE IF NOT EXISTS learnloop_delegations (
+                delegation_id TEXT PRIMARY KEY,
+                parent_run_id TEXT NOT NULL,
+                child_run_id TEXT NOT NULL UNIQUE,
+                role TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                status TEXT NOT NULL,
+                request_json TEXT NOT NULL,
+                result_json TEXT,
+                used_tokens INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (parent_run_id, fingerprint),
+                FOREIGN KEY (parent_run_id) REFERENCES learnloop_agent_runs(run_id)
+                    ON DELETE CASCADE,
+                FOREIGN KEY (child_run_id) REFERENCES learnloop_agent_runs(run_id)
+                    ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS ix_learnloop_delegations_parent_created
+                ON learnloop_delegations (parent_run_id, created_at);
             """
         )
         await self._connection.commit()
@@ -320,6 +340,128 @@ class SqliteAgentRunStore:
         rows = await cursor.fetchall()
         await cursor.close()
         return [_run_from_row(row) for row in rows]
+
+    async def list_children(self, parent_run_id: str) -> list[AgentRun]:
+        cursor = await self._connection.execute(
+            """
+            SELECT * FROM learnloop_agent_runs
+            WHERE parent_run_id = ? ORDER BY created_at
+            """,
+            (parent_run_id,),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [_run_from_row(row) for row in rows]
+
+    async def create_delegation(
+        self,
+        request_json: str,
+        *,
+        delegation_id: str,
+        parent_run_id: str,
+        child_run_id: str,
+        role: str,
+        fingerprint: str,
+    ) -> bool:
+        """Reserve a stable delegation identity before executing the child.
+
+        The parent/fingerprint unique key is the cross-process duplicate barrier.
+        A per-parent in-memory lock handles normal serialization; this constraint
+        still protects crash recovery and multiple API worker processes.
+        """
+
+        now = datetime.now(UTC).isoformat()
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                """
+                INSERT OR IGNORE INTO learnloop_delegations (
+                    delegation_id, parent_run_id, child_run_id, role,
+                    fingerprint, status, request_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)
+                """,
+                (
+                    delegation_id,
+                    parent_run_id,
+                    child_run_id,
+                    role,
+                    fingerprint,
+                    request_json,
+                    now,
+                    now,
+                ),
+            )
+            created = cursor.rowcount == 1
+            await cursor.close()
+            await self._connection.commit()
+            return created
+
+    async def finish_delegation(
+        self,
+        delegation_id: str,
+        *,
+        status: str,
+        result_json: str,
+        used_tokens: int,
+    ) -> None:
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                """
+                UPDATE learnloop_delegations
+                SET status = ?, result_json = ?, used_tokens = ?, updated_at = ?
+                WHERE delegation_id = ?
+                """,
+                (
+                    status,
+                    result_json,
+                    used_tokens,
+                    datetime.now(UTC).isoformat(),
+                    delegation_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                await cursor.close()
+                raise LookupError(f"delegation {delegation_id} was not found")
+            await cursor.close()
+            await self._connection.commit()
+
+    async def get_delegation(
+        self, delegation_id: str
+    ) -> dict[str, object] | None:
+        cursor = await self._connection.execute(
+            "SELECT * FROM learnloop_delegations WHERE delegation_id = ?",
+            (delegation_id,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        return _delegation_from_row(row) if row is not None else None
+
+    async def find_delegation(
+        self, parent_run_id: str, fingerprint: str
+    ) -> dict[str, object] | None:
+        cursor = await self._connection.execute(
+            """
+            SELECT * FROM learnloop_delegations
+            WHERE parent_run_id = ? AND fingerprint = ?
+            """,
+            (parent_run_id, fingerprint),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        return _delegation_from_row(row) if row is not None else None
+
+    async def list_delegations(
+        self, parent_run_id: str
+    ) -> list[dict[str, object]]:
+        cursor = await self._connection.execute(
+            """
+            SELECT * FROM learnloop_delegations
+            WHERE parent_run_id = ? ORDER BY created_at
+            """,
+            (parent_run_id,),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [_delegation_from_row(row) for row in rows]
 
     async def set_status(
         self,
@@ -910,6 +1052,24 @@ def _run_from_row(row: aiosqlite.Row) -> AgentRun:
         created_at=datetime.fromisoformat(str(row["created_at"])),
         updated_at=datetime.fromisoformat(str(row["updated_at"])),
     )
+
+
+def _delegation_from_row(row: aiosqlite.Row) -> dict[str, object]:
+    return {
+        "delegation_id": str(row["delegation_id"]),
+        "parent_run_id": str(row["parent_run_id"]),
+        "child_run_id": str(row["child_run_id"]),
+        "role": str(row["role"]),
+        "fingerprint": str(row["fingerprint"]),
+        "status": str(row["status"]),
+        "request_json": str(row["request_json"]),
+        "result_json": (
+            str(row["result_json"]) if row["result_json"] is not None else None
+        ),
+        "used_tokens": int(row["used_tokens"]),
+        "created_at": str(row["created_at"]),
+        "updated_at": str(row["updated_at"]),
+    }
 
 
 def _validate_status_transition(current: RunStatus, target: RunStatus) -> None:

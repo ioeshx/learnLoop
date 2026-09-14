@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-GraphKind = Literal["daily_learning", "goal_planning"]
+GraphKind = Literal["daily_learning", "goal_planning", "researcher"]
 EngineVersion = Literal["fixed_v1", "dynamic_v2"]
 RunStatus = Literal[
     "created", "running", "awaiting_input", "completed", "failed", "cancelled"
@@ -41,6 +41,11 @@ EventKind = Literal[
     "budget_updated",
     "run_paused",
     "run_cancelled",
+    "delegation_started",
+    "delegation_completed",
+    "delegation_failed",
+    "delegation_cancelled",
+    "delegation_reused",
 ]
 
 
@@ -77,7 +82,7 @@ class ModelCallTrace:
 
 # run_id       LearnLoop 暴露给 API 和前端的运行 ID
 # thread_id    LangGraph Checkpoint 线程 ID
-# graph_kind   daily_learning 或 goal_planning
+# graph_kind   Lead workflow 或受控 Subagent role
 # resource_id  session_id 或 goal_id
 # status       当前生命周期状态
 @dataclass(frozen=True, slots=True)

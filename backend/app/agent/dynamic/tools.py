@@ -12,6 +12,11 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.agent.delegation import (
+    DelegationExecutionError,
+    DelegationService,
+    DelegationStatus,
+)
 from app.agent.dynamic.models import (
     ApprovalPolicy,
     ToolError,
@@ -65,7 +70,20 @@ class ResearchInput(ToolInput):
     knowledge_node_id: str | None = None
 
 
-ToolHandler = Callable[[BaseModel, str], Awaitable[object]]
+class DelegateResearchInput(ToolInput):
+    objective: str = Field(min_length=1, max_length=2_000)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolInvocation:
+    """Trusted execution metadata injected by ToolExecutor, never by the model."""
+
+    run_id: str
+    plan_step_id: str
+    idempotency_key: str
+
+
+ToolHandler = Callable[[BaseModel, ToolInvocation], Awaitable[object]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,10 +193,16 @@ class ToolExecutor:
                 started,
             )
 
-        idempotency_key = _idempotency_key(run_id, plan_step_id, name, arguments)
+        invocation = ToolInvocation(
+            run_id=run_id,
+            plan_step_id=plan_step_id,
+            idempotency_key=_idempotency_key(
+                run_id, plan_step_id, name, arguments
+            ),
+        )
         try:
             async with asyncio.timeout(definition.spec.timeout_seconds):
-                raw_output = await definition.handler(validated, idempotency_key)
+                raw_output = await definition.handler(validated, invocation)
         except TimeoutError:
             return self._error(
                 name,
@@ -186,6 +210,22 @@ class ToolExecutor:
                 "tool execution exceeded its timeout",
                 started,
                 retryable=True,
+            )
+        except DelegationExecutionError as error:
+            kind = {
+                DelegationStatus.DEADLINE_EXCEEDED: ToolErrorKind.TIMEOUT,
+                DelegationStatus.CANCELLED: ToolErrorKind.CANCELLED,
+            }.get(error.result.status, ToolErrorKind.PERMANENT)
+            return ToolResult(
+                tool_name=name,
+                succeeded=False,
+                output=error.result.model_dump(mode="json"),
+                error=ToolError(
+                    kind=kind,
+                    message=f"Researcher Subagent {error.result.status.value}",
+                    retryable=False,
+                ),
+                duration_ms=(perf_counter() - started) * 1_000,
             )
         except ApplicationError as error:
             kind = {
@@ -237,49 +277,51 @@ class ToolExecutor:
 
 
 def build_learning_tool_registry(
-    tools: LearningTools, research: ResearchTutor | None = None
+    tools: LearningTools,
+    research: ResearchTutor | None = None,
+    delegation: DelegationService | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry()
 
-    async def goal_state(value: BaseModel, _: str) -> object:
+    async def goal_state(value: BaseModel, _: ToolInvocation) -> object:
         parsed = GoalStateInput.model_validate(value)
         return await tools.get_learning_goal(parsed.goal_id)
 
-    async def session_state(value: BaseModel, _: str) -> object:
+    async def session_state(value: BaseModel, _: ToolInvocation) -> object:
         parsed = SessionStateInput.model_validate(value)
         return await tools.get_study_session(parsed.session_id)
 
-    async def mastery(value: BaseModel, _: str) -> object:
+    async def mastery(value: BaseModel, _: ToolInvocation) -> object:
         parsed = MasteryInput.model_validate(value)
         return await tools.get_mastery_state(parsed.knowledge_node_id)
 
-    async def search(value: BaseModel, _: str) -> object:
+    async def search(value: BaseModel, _: ToolInvocation) -> object:
         parsed = ResourceSearchInput.model_validate(value)
         return await tools.search_learning_resources(parsed.knowledge_node_id)
 
-    async def exercise(value: BaseModel, _: str) -> object:
+    async def exercise(value: BaseModel, _: ToolInvocation) -> object:
         parsed = ExerciseInput.model_validate(value)
         return await tools.create_exercise(parsed.session_id)
 
-    async def grade(value: BaseModel, idempotency_key: str) -> object:
+    async def grade(value: BaseModel, invocation: ToolInvocation) -> object:
         parsed = GradeExerciseInput.model_validate(value)
         return await tools.update_mastery(
             session_id=parsed.session_id,
             exercise_id=parsed.exercise_id,
             selected_options=parsed.selected_options,
-            idempotency_key=idempotency_key,
+            idempotency_key=invocation.idempotency_key,
         )
 
-    async def schedule(value: BaseModel, _: str) -> object:
+    async def schedule(value: BaseModel, _: ToolInvocation) -> object:
         parsed = ScheduleReviewInput.model_validate(value)
         return {"due_at": tools.schedule_review({"due_at": parsed.due_at})}
 
-    async def complete(value: BaseModel, _: str) -> object:
+    async def complete(value: BaseModel, _: ToolInvocation) -> object:
         parsed = SessionStateInput.model_validate(value)
         await tools.complete_study_session(parsed.session_id)
         return {"session_id": parsed.session_id, "status": "completed"}
 
-    async def ask_research(value: BaseModel, _: str) -> object:
+    async def ask_research(value: BaseModel, _: ToolInvocation) -> object:
         if research is None:
             raise RuntimeError("Research Tutor is not configured")
         parsed = ResearchInput.model_validate(value)
@@ -320,6 +362,25 @@ def build_learning_tool_registry(
             "usage": result.usage.model_dump(mode="json"),
         }
 
+    async def delegate_research(
+        value: BaseModel, invocation: ToolInvocation
+    ) -> object:
+        if delegation is None:
+            raise RuntimeError("Subagent delegation is not configured")
+        parsed = DelegateResearchInput.model_validate(value)
+        result = await delegation.delegate_research(
+            parent_run_id=invocation.run_id,
+            plan_step_id=invocation.plan_step_id,
+            objective=parsed.objective,
+        )
+        if result.status in {
+            DelegationStatus.FAILED,
+            DelegationStatus.DEADLINE_EXCEEDED,
+            DelegationStatus.CANCELLED,
+        }:
+            raise DelegationExecutionError(result)
+        return result.model_dump(mode="json")
+
     registry.register(
         name="goal.get_state",
         description="Read a learning goal and its constraints.",
@@ -354,6 +415,19 @@ def build_learning_tool_registry(
             ),
             input_type=ResearchInput,
             handler=ask_research,
+            max_result_chars=20_000,
+        )
+    if delegation is not None:
+        registry.register(
+            name="delegate.research",
+            description=(
+                "Delegate one complex multi-hop, read-only research task to an "
+                "isolated Researcher child Agent. Simple questions must use "
+                "research.ask."
+            ),
+            input_type=DelegateResearchInput,
+            handler=delegate_research,
+            timeout_seconds=min(120, delegation.deadline_seconds + 5),
             max_result_chars=20_000,
         )
     registry.register(

@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     research_max_sources: int = Field(default=12, ge=1, le=50)
     research_max_read_chars: int = Field(default=30_000, ge=1_000, le=200_000)
     research_max_context_tokens: int = Field(default=8_000, ge=500, le=50_000)
+    agent_max_subagents: int = Field(default=3, ge=1, le=12)
+    agent_delegation_max_tokens: int = Field(default=6_000, ge=500, le=50_000)
+    agent_delegation_max_queries: int = Field(default=6, ge=1, le=30)
+    agent_delegation_max_sources: int = Field(default=10, ge=1, le=50)
+    agent_delegation_deadline_seconds: float = Field(default=60, gt=0, le=600)
     embedding_provider: Literal["local", "openai_compatible"] = "local"
     embedding_model: str = "text-embedding-3-small"
     embedding_api_key: SecretStr | None = None

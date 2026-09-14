@@ -69,6 +69,24 @@ class BudgetLedger:
         )
         return self.usage
 
+    def reserve_delegation(self, tokens: int) -> BudgetDecision:
+        """Charge a child allocation to the parent before another Agent turn.
+
+        Reservation intentionally charges the allocation rather than a best-effort
+        estimate. This prevents concurrent or retried children from oversubscribing
+        the Lead's Token budget even when provider usage arrives later.
+        """
+
+        self.usage = self.usage.model_copy(
+            update={
+                "delegated_tokens": self.usage.delegated_tokens + tokens,
+                "total_tokens": self.usage.total_tokens + tokens,
+            }
+        )
+        if self.usage.total_tokens > self.budget.max_total_tokens:
+            return self._exhausted("max_total_tokens")
+        return BudgetDecision(allowed=True)
+
     def record_replan(self) -> BudgetDecision:
         self.usage = self.usage.model_copy(
             update={"replans": self.usage.replans + 1}

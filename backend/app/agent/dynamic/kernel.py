@@ -229,6 +229,10 @@ class DynamicAgentKernel:
                     "cancelled",
                 }:
                     return
+                if current_run is not None and current_run.cancel_requested:
+                    await self._save(state)
+                    yield await self._terminate(run.run_id, "cancelled")
+                    return
                 latest = state.observations[-1]
                 should_replan = (
                     not latest.succeeded
@@ -552,6 +556,23 @@ class DynamicAgentKernel:
             plan_step_id=step.id,
         )
         ledger.record_tool()
+        delegated_allocation = _delegated_allocation(tool_name, result)
+        if delegated_allocation:
+            allocation_decision = ledger.reserve_delegation(delegated_allocation)
+            if not allocation_decision.allowed:
+                # DelegationService derives allocation from durable parent state, so
+                # reaching this branch signals a concurrency/accounting invariant
+                # violation and must fail closed before another model turn.
+                result = ToolResult(
+                    tool_name=tool_name,
+                    succeeded=False,
+                    error=ToolError(
+                        kind=ToolErrorKind.PERMANENT,
+                        message=allocation_decision.detail
+                        or "delegation exceeded parent budget",
+                    ),
+                    duration_ms=result.duration_ms,
+                )
         summary = _tool_result_summary(result)
         await self.store.finish_tool_call(
             call_id=action_id,
@@ -1033,6 +1054,19 @@ def _tool_result_summary(result: ToolResult) -> dict[str, object]:
 def _tool_failure_summary(tool_name: str, result: ToolResult) -> str:
     message = result.error.message if result.error is not None else "unknown"
     return f"{tool_name} failed: {message}"
+
+
+def _delegated_allocation(tool_name: str, result: ToolResult) -> int:
+    # Only the trusted delegation namespace may affect the parent reservation.
+    # Arbitrary retrieved Tool data containing an ``allocated_tokens`` field is
+    # untrusted and must not be able to exhaust the Lead's budget.
+    if not tool_name.startswith("delegate.") or not isinstance(result.output, dict):
+        return 0
+    usage = result.output.get("usage")
+    if not isinstance(usage, dict):
+        return 0
+    value = usage.get("allocated_tokens")
+    return value if isinstance(value, int) and value > 0 else 0
 
 
 def _optional_string(value: object) -> str | None:

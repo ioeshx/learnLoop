@@ -273,6 +273,7 @@ class BudgetUsage(AgentContract):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     total_tokens: int = Field(default=0, ge=0)
+    delegated_tokens: int = Field(default=0, ge=0)
     replans: int = Field(default=0, ge=0)
 
 

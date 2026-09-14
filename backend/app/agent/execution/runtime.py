@@ -32,6 +32,7 @@ from app.infrastructure.llm import StructuredModel
 from app.observability import bind_agent_run, reset_agent_run
 
 if TYPE_CHECKING:
+    from app.agent.delegation import DelegationService
     from app.agent.dynamic.kernel import DynamicAgentKernel
     from app.agent.research import ResearchTutor
 
@@ -59,6 +60,7 @@ class AgentRuntime:
     model: StructuredModel | None
     retention_days: int
     dynamic_kernel: DynamicAgentKernel | None
+    delegation: DelegationService | None = None
     context_debug_enabled: bool = False
     _tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     _task_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -429,6 +431,11 @@ class AgentRuntime:
         task = self._tasks.get(run.run_id)
         if task is not None and not task.done():
             raise RuntimeError("cannot delete an Agent run while it is executing")
+        # Child Runs are execution-owned projections. Delete descendants first so a
+        # user cannot leave orphan Subagent traces after removing the Lead Run.
+        for child in reversed(await self._descendants(run.run_id)):
+            await self.checkpointer.adelete_thread(child.thread_id)
+            await self.run_store.delete(child.run_id)
         await self.checkpointer.adelete_thread(run.thread_id)
         await self.run_store.delete(run.run_id)
 
@@ -440,6 +447,10 @@ class AgentRuntime:
         """
 
         requested = await self.run_store.request_cancel(run.run_id)
+        descendants = await self._descendants(run.run_id)
+        for child in descendants:
+            if child.status not in {"completed", "failed", "cancelled"}:
+                await self.run_store.request_cancel(child.run_id)
         task = self._tasks.get(run.run_id)
         if run.engine_version == "fixed_v1" and task is not None and not task.done():
             task.cancel()
@@ -452,6 +463,21 @@ class AgentRuntime:
             )
             return cancelled
         if task is None or task.done():
+            for child in descendants:
+                refreshed_child = await self.run_store.get(child.run_id)
+                if refreshed_child is not None and refreshed_child.status not in {
+                    "completed",
+                    "failed",
+                    "cancelled",
+                }:
+                    await self.run_store.set_status(
+                        child.run_id, "cancelled", terminal_reason="cancelled"
+                    )
+                    await self.run_store.append_event(
+                        child.run_id,
+                        "run_cancelled",
+                        data={"terminal_reason": "cancelled"},
+                    )
             cancelled = await self.run_store.set_status(
                 run.run_id, "cancelled", terminal_reason="cancelled"
             )
@@ -460,6 +486,15 @@ class AgentRuntime:
             )
             return cancelled
         return requested
+
+    async def _descendants(self, run_id: str) -> list[AgentRun]:
+        descendants: list[AgentRun] = []
+        pending = list(await self.run_store.list_children(run_id))
+        while pending:
+            child = pending.pop(0)
+            descendants.append(child)
+            pending.extend(await self.run_store.list_children(child.run_id))
+        return descendants
 
     async def shutdown(self) -> None:
         tasks = list(self._tasks.values())
@@ -479,6 +514,7 @@ async def open_agent_runtime(
 ) -> AsyncGenerator[AgentRuntime, None]:
     # Local imports keep the execution package importable by dynamic submodules without
     # creating a runtime ↔ kernel circular import.
+    from app.agent.delegation import DelegationService
     from app.agent.dynamic.context import ContextCompiler, token_counter_for
     from app.agent.dynamic.kernel import DynamicAgentKernel
     from app.agent.dynamic.models import RunBudget
@@ -497,6 +533,19 @@ async def open_agent_runtime(
         memory_service = MemoryService(
             dependencies.uow_factory, clock=dependencies.clock
         )
+        delegation_service = (
+            DelegationService(
+                store=run_store,
+                researcher=research_tutor,
+                max_children=settings.agent_max_subagents,
+                max_tokens=settings.agent_delegation_max_tokens,
+                max_queries=settings.agent_delegation_max_queries,
+                max_sources=settings.agent_delegation_max_sources,
+                deadline_seconds=settings.agent_delegation_deadline_seconds,
+            )
+            if research_tutor is not None
+            else None
+        )
         runtime = AgentRuntime(
             checkpointer=checkpointer,
             run_store=run_store,
@@ -510,7 +559,9 @@ async def open_agent_runtime(
                     store=run_store,
                     policy=ModelAgentPolicy(model),
                     tools=ToolExecutor(
-                        build_learning_tool_registry(learning_tools, research_tutor)
+                        build_learning_tool_registry(
+                            learning_tools, research_tutor, delegation_service
+                        )
                     ),
                     context=ContextCompiler(
                         artifact_reader=run_store,
@@ -550,6 +601,7 @@ async def open_agent_runtime(
                 if model is not None
                 else None
             ),
+            delegation=delegation_service,
             context_debug_enabled=settings.agent_context_debug_full,
         )
         if model is not None:
