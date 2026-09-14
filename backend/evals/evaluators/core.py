@@ -35,6 +35,8 @@ def evaluate(dataset: dict[str, Any]) -> list[Metric]:
         return _evaluate_memory(dataset)
     if dataset.get("suite") == "agentic_research":
         return _evaluate_research(dataset)
+    if dataset.get("suite") == "subagent_delegation":
+        return _evaluate_delegation(dataset)
     thresholds = dataset["thresholds"]
     retrieval = dataset["retrieval"]
     usage = dataset["model_usage"]
@@ -236,6 +238,70 @@ def _evaluate_research(dataset: dict[str, Any]) -> list[Metric]:
             "research_average_tokens",
             sum(float(case["estimated_tokens"]) for case in cases) / len(cases),
             float(thresholds["research_average_tokens"]),
+            higher_is_better=False,
+        ),
+    ]
+
+
+def _evaluate_delegation(dataset: dict[str, Any]) -> list[Metric]:
+    """Evaluate routing, isolation, lifecycle, fallback, and bounded cost."""
+
+    thresholds = dataset["thresholds"]
+    cases = dataset["delegation_cases"]
+    simple = [case for case in cases if case["category"] == "simple"]
+    cancelled = [case for case in cases if case["parent_cancelled"]]
+    duplicates = [case for case in cases if case["duplicate_attempts"] > 1]
+    failures = [case for case in cases if case["subagent_failed"]]
+    comparative = [case for case in cases if case["single_agent_ms"] > 0]
+    single_tokens = sum(float(case["single_agent_tokens"]) for case in comparative)
+    return [
+        Metric(
+            "subagent_simple_delegation_rate",
+            sum(bool(case["delegated"]) for case in simple) / len(simple),
+            float(thresholds["subagent_simple_delegation_rate"]),
+            higher_is_better=False,
+        ),
+        _rate_metric(
+            "subagent_scope_safety_rate",
+            [not case["scope_escaped"] for case in cases],
+            thresholds,
+        ),
+        _rate_metric(
+            "subagent_cancel_propagation_rate",
+            [case["child_cancelled"] for case in cancelled],
+            thresholds,
+        ),
+        _rate_metric(
+            "subagent_duplicate_prevention_rate",
+            [case["new_child_runs"] == 1 for case in duplicates],
+            thresholds,
+        ),
+        _rate_metric(
+            "subagent_fallback_rate",
+            [case["lead_fallback"] for case in failures],
+            thresholds,
+        ),
+        Metric(
+            "subagent_task_success_lift",
+            (
+                sum(bool(case["success_delegated"]) for case in cases)
+                - sum(bool(case["success_single_agent"]) for case in cases)
+            )
+            / len(cases),
+            float(thresholds["subagent_task_success_lift"]),
+        ),
+        Metric(
+            "subagent_wall_clock_ratio",
+            sum(float(case["delegated_ms"]) for case in comparative)
+            / sum(float(case["single_agent_ms"]) for case in comparative),
+            float(thresholds["subagent_wall_clock_ratio"]),
+            higher_is_better=False,
+        ),
+        Metric(
+            "subagent_token_overhead_ratio",
+            sum(float(case["delegated_tokens"]) for case in comparative)
+            / single_tokens,
+            float(thresholds["subagent_token_overhead_ratio"]),
             higher_is_better=False,
         ),
     ]

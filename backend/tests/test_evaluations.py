@@ -12,6 +12,9 @@ MEMORY_DATASET = (
 RESEARCH_DATASET = (
     Path(__file__).parents[1] / "evals" / "datasets" / "research_v1.json"
 )
+DELEGATION_DATASET = (
+    Path(__file__).parents[1] / "evals" / "datasets" / "delegation_v1.json"
+)
 
 
 def test_v1_evaluation_dataset_meets_all_thresholds(tmp_path: Path) -> None:
@@ -52,3 +55,17 @@ def test_research_evaluation_dataset_meets_frozen_gates() -> None:
     assert values["research_citation_support_accuracy"] == 1.0
     assert values["research_safety_rate"] == 1.0
     assert values["research_task_success_lift"] == 0.666667
+
+
+def test_delegation_evaluation_dataset_meets_frozen_gates() -> None:
+    report = run(DELEGATION_DATASET, now=datetime(2026, 9, 16, tzinfo=UTC))
+    values = {metric["name"]: metric["value"] for metric in report.metrics}
+
+    assert report.dataset_version == "delegation-1.0.0"
+    assert report.passed is True
+    assert values["subagent_simple_delegation_rate"] == 0.0
+    assert values["subagent_scope_safety_rate"] == 1.0
+    assert values["subagent_cancel_propagation_rate"] == 1.0
+    assert values["subagent_duplicate_prevention_rate"] == 1.0
+    assert values["subagent_fallback_rate"] == 1.0
+    assert values["subagent_task_success_lift"] == 0.5
