@@ -153,7 +153,10 @@ export type AgentEventKind =
   | "skill_candidate_created"
   | "skill_recalled"
   | "skill_usage_recorded"
-  | "skill_quarantined";
+  | "skill_quarantined"
+  | "policy_selected"
+  | "reward_recorded"
+  | "reward_matured";
 
 export type AgentEvent = {
   run_id: string;
@@ -277,6 +280,105 @@ export type AgentTrace = {
   child_runs: AgentRun[];
   reflections: RunReflection[];
   skill_usage: SkillUsage | null;
+  reward: RewardRecord | null;
+  policy_decisions: BanditDecision[];
+};
+
+export type PolicyVersion = {
+  id: string;
+  family: string;
+  version: number;
+  status: "candidate" | "active" | "disabled" | "quarantined";
+  algorithm: "linucb";
+  feature_schema_version: string;
+  reward_version: string;
+  alpha: number;
+  epsilon: number;
+  arms: Array<{
+    id: string;
+    instruction: string;
+    required_tools: string[];
+    prohibited_actions: string[];
+  }>;
+  source_experiment_id: string | null;
+  created_at: string;
+};
+
+export type BanditDecision = {
+  id: string;
+  run_id: string;
+  plan_step_id: string;
+  decision_point_id: string;
+  policy_id: string;
+  policy_version: number;
+  arm_id: string;
+  context: {
+    progress: number;
+    consecutive_failures: number;
+    retrieval_available: number;
+    write_step: number;
+    intercept: number;
+  };
+  propensity: number;
+  score: number;
+  exploratory: boolean;
+  reward_id: string | null;
+  created_at: string;
+};
+
+export type RewardRecord = {
+  id: string;
+  run_id: string;
+  reward_version: string;
+  status: "provisional" | "mature" | "ineligible";
+  components: {
+    task_completion: number;
+    immediate_verification: number;
+    delayed_retention: number | null;
+    transfer: number | null;
+    user_feedback: number | null;
+    token_efficiency: number;
+    tool_efficiency: number;
+    latency_efficiency: number;
+  };
+  safety_violations: string[];
+  hard_gate_passed: boolean;
+  optimization_score: number | null;
+  created_at: string;
+  matured_at: string | null;
+};
+
+export type FailureCluster = {
+  signature: string;
+  problem_category: string;
+  count: number;
+  run_ids: string[];
+  root_causes: string[];
+  evidence_references: string[];
+};
+
+export type ExperimentReport = {
+  manifest: {
+    id: string;
+    name: string;
+    change_type: string;
+    baseline_version: string;
+    candidate_version: string;
+    dataset_version: string;
+    status: "draft" | "completed" | "promotable" | "rejected";
+  };
+  split: string;
+  sample_count: number;
+  effective_sample_size: number;
+  baseline_reward: number;
+  snips_reward: number;
+  reward_lift: number;
+  token_ratio: number;
+  safety_violations: number;
+  confidence_low: number;
+  confidence_high: number;
+  promotable: boolean;
+  rejection_reasons: string[];
 };
 
 export type RunReflection = {
@@ -929,6 +1031,26 @@ export function fetchAgentTrace(runId: string): Promise<AgentTrace> {
 
 export function fetchAgentSkills(): Promise<SkillRecord[]> {
   return apiRequest<SkillRecord[]>("/agent/skills");
+}
+
+export function fetchPolicyVersions(): Promise<PolicyVersion[]> {
+  return apiRequest<PolicyVersion[]>("/agent/optimization/policies");
+}
+
+export function fetchOptimizationRewards(): Promise<RewardRecord[]> {
+  return apiRequest<RewardRecord[]>("/agent/optimization/rewards");
+}
+
+export function fetchBanditDecisions(): Promise<BanditDecision[]> {
+  return apiRequest<BanditDecision[]>("/agent/optimization/decisions");
+}
+
+export function fetchPolicyExperiments(): Promise<ExperimentReport[]> {
+  return apiRequest<ExperimentReport[]>("/agent/optimization/experiments");
+}
+
+export function fetchFailureClusters(): Promise<FailureCluster[]> {
+  return apiRequest<FailureCluster[]>("/agent/optimization/failure-clusters");
 }
 
 export function reviewAgentSkill(

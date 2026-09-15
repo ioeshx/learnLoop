@@ -20,6 +20,7 @@ from app.agent.experience import (
     SkillStatusRequest,
     SkillUsage,
 )
+from app.agent.optimization import BanditDecision, RewardRecord
 from app.api.dependencies import AgentRuntimeDep
 from app.api.schemas import (
     AgentEventResponse,
@@ -143,6 +144,10 @@ async def get_agent_trace(
         else []
     )
     raw_skill_usage = await runtime.run_store.get_skill_usage(run.run_id)
+    raw_reward = await runtime.run_store.get_reward(run.run_id)
+    policy_decisions = await runtime.run_store.list_bandit_decisions(
+        run_id=run.run_id
+    )
     return AgentTraceResponse(
         run=AgentRunResponse.from_execution(run),
         events=[AgentEventResponse.from_execution(event) for event in events],
@@ -168,6 +173,14 @@ async def get_agent_trace(
             if raw_skill_usage is not None
             else None
         ),
+        reward=(
+            RewardRecord.model_validate_json(raw_reward)
+            if raw_reward is not None
+            else None
+        ),
+        policy_decisions=[
+            BanditDecision.model_validate_json(item) for item in policy_decisions
+        ],
     )
 
 

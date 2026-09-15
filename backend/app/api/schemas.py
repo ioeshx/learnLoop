@@ -9,6 +9,7 @@ from app.agent.delegation import DelegationRecord
 from app.agent.execution import AgentEvent, AgentRun
 from app.agent.execution.models import ModelCallTrace, ToolCallTrace
 from app.agent.experience import RunReflection, SkillUsage
+from app.agent.optimization import BanditDecision, RewardRecord
 from app.application.models import (
     AttemptResult,
     DueReview,
@@ -501,6 +502,8 @@ class AgentTraceResponse(BaseModel):
     child_runs: list[AgentRunResponse] = Field(default_factory=list)
     reflections: list[RunReflection] = Field(default_factory=list)
     skill_usage: SkillUsage | None = None
+    reward: RewardRecord | None = None
+    policy_decisions: list[BanditDecision] = Field(default_factory=list)
 
 
 class ResumeAgentRunRequest(RequestModel):

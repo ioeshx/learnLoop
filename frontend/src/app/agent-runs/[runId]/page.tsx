@@ -160,6 +160,35 @@ export default function AgentTracePage() {
             </section>
           ) : null}
 
+          {trace.reward || trace.policy_decisions.length ? (
+            <section className="dashboard-card">
+              <p className="eyebrow">POLICY OPTIMIZATION</p>
+              <h2>Reward & Bandit Decisions</h2>
+              {trace.reward ? (
+                <div className="trace-row">
+                  <strong>
+                    Reward {trace.reward.status} · {trace.reward.optimization_score?.toFixed(3) ?? "pending"}
+                  </strong>
+                  <span>Safety gate: {String(trace.reward.hard_gate_passed)}</span>
+                  <small>
+                    completion {trace.reward.components.task_completion} · immediate {trace.reward.components.immediate_verification} · retention {trace.reward.components.delayed_retention ?? "—"} · transfer {trace.reward.components.transfer ?? "—"}
+                  </small>
+                </div>
+              ) : null}
+              {trace.policy_decisions.map((decision) => (
+                <div className="trace-row" key={decision.id}>
+                  <strong>{decision.arm_id} · Step {decision.plan_step_id}</strong>
+                  <span>
+                    Policy v{decision.policy_version} · propensity {decision.propensity.toFixed(3)}
+                  </span>
+                  <small>
+                    {decision.exploratory ? "exploration" : "exploitation"} · reward {decision.reward_id ?? "pending"}
+                  </small>
+                </div>
+              ))}
+            </section>
+          ) : null}
+
           {latestContext ? (
             <section className="dashboard-card">
               <p className="eyebrow">
