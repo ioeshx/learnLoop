@@ -272,6 +272,10 @@ Reward 必须同时包含：
 - 能通过消融说明提升来自模型训练、Prompt、Context 还是 Harness；
 - 所有训练结果可复现并可回滚。
 
+### 实现文档
+
+- [阶段 17：策略优化与 Agentic RL](./stage-17-policy-optimization-agentic-rl.md)
+
 ## 10. 推荐提交粒度
 
 每个阶段继续采用“小步可验收”的提交方式。例如阶段 11 可拆为：

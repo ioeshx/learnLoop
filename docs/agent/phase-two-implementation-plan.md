@@ -633,6 +633,9 @@ Reward 分项分别报告，安全惩罚使用硬门禁，不允许被任务分�
 - 安全、成本和最坏情况指标未恶化；
 - 模型、策略和数据版本均能回滚。
 
+详细实现、Reward/Contextual Bandit/OPE 架构和当前训练门禁见
+[阶段 17：策略优化与 Agentic RL](./stage-17-policy-optimization-agentic-rl.md)。
+
 ## 13. 前端与 API 的渐进交付
 
 前端不单独排在所有后端完成之后，而跟随可观测能力逐步增加：
@@ -649,6 +652,7 @@ Reward 分项分别报告，安全惩罚使用硬门禁，不允许被任务分�
 | 14 | Claim 与 Citation | 可点击证据和证据不足提示 |
 | 15 | 父子 Run | 委派树与子任务消耗 |
 | 16 | Skill 来源和版本 | 管理/停用界面，普通用户不必暴露内部细节 |
+| 17 | Policy、Reward、propensity、experiment | 内部 Policy Lab、holdout gate 与 rollback 状态 |
 
 所有调试视图都必须区分普通用户和开发模式，避免暴露系统 Prompt、敏感资料或内部策略。
 

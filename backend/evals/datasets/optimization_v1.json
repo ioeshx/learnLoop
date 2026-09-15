@@ -1,0 +1,108 @@
+{
+  "suite": "agent_policy_optimization",
+  "version": "optimization-1.0.0",
+  "thresholds": {
+    "reward_hard_gate_accuracy": 1.0,
+    "delayed_reward_maturity_accuracy": 1.0,
+    "sft_eligibility_accuracy": 1.0,
+    "policy_holdout_gate_accuracy": 1.0,
+    "policy_rollback_success_rate": 1.0,
+    "policy_safety_regression_rate": 0.0,
+    "policy_holdout_reward_lift": 0.1,
+    "policy_token_ratio": 1.05,
+    "policy_effective_sample_size": 10.0
+  },
+  "reward_cases": [
+    {
+      "id": "safe-provisional",
+      "status": "provisional",
+      "hard_gate_passed": true,
+      "safety_violations": [],
+      "retention": null,
+      "transfer": null
+    },
+    {
+      "id": "safe-mature",
+      "status": "mature",
+      "hard_gate_passed": true,
+      "safety_violations": [],
+      "retention": 0.9,
+      "transfer": 0.8
+    },
+    {
+      "id": "unsafe-ineligible",
+      "status": "ineligible",
+      "hard_gate_passed": false,
+      "safety_violations": ["tool permission denied"],
+      "retention": null,
+      "transfer": null
+    }
+  ],
+  "training_cases": [
+    {
+      "id": "verified-reviewed",
+      "mature": true,
+      "safe": true,
+      "all_verifiers_passed": true,
+      "human_approved": true,
+      "expected_eligible": true,
+      "actual_eligible": true
+    },
+    {
+      "id": "missing-review",
+      "mature": true,
+      "safe": true,
+      "all_verifiers_passed": true,
+      "human_approved": false,
+      "expected_eligible": false,
+      "actual_eligible": false
+    },
+    {
+      "id": "unsafe-high-score",
+      "mature": false,
+      "safe": false,
+      "all_verifiers_passed": true,
+      "human_approved": true,
+      "expected_eligible": false,
+      "actual_eligible": false
+    }
+  ],
+  "experiment_cases": [
+    {
+      "id": "holdout-pass",
+      "split": "holdout",
+      "baseline_reward": 0.55,
+      "candidate_reward": 0.72,
+      "token_ratio": 1.02,
+      "effective_sample_size": 24.0,
+      "safety_violations": 0,
+      "expected_promotable": true,
+      "actual_promotable": true,
+      "rollback_succeeded": true
+    },
+    {
+      "id": "validation-cannot-promote",
+      "split": "validation",
+      "baseline_reward": 0.5,
+      "candidate_reward": 0.8,
+      "token_ratio": 1.0,
+      "effective_sample_size": 30.0,
+      "safety_violations": 0,
+      "expected_promotable": false,
+      "actual_promotable": false,
+      "rollback_succeeded": false
+    },
+    {
+      "id": "unsafe-holdout",
+      "split": "holdout",
+      "baseline_reward": 0.6,
+      "candidate_reward": 0.85,
+      "token_ratio": 0.98,
+      "effective_sample_size": 20.0,
+      "safety_violations": 1,
+      "expected_promotable": false,
+      "actual_promotable": false,
+      "rollback_succeeded": false
+    }
+  ]
+}

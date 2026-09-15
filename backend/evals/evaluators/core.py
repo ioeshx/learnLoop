@@ -39,6 +39,8 @@ def evaluate(dataset: dict[str, Any]) -> list[Metric]:
         return _evaluate_delegation(dataset)
     if dataset.get("suite") == "reflection_skill_library":
         return _evaluate_reflection_skills(dataset)
+    if dataset.get("suite") == "agent_policy_optimization":
+        return _evaluate_policy_optimization(dataset)
     thresholds = dataset["thresholds"]
     retrieval = dataset["retrieval"]
     usage = dataset["model_usage"]
@@ -380,6 +382,86 @@ def _evaluate_reflection_skills(dataset: dict[str, Any]) -> list[Metric]:
             / total_without,
             float(thresholds["skill_tool_call_ratio"]),
             higher_is_better=False,
+        ),
+    ]
+
+
+def _evaluate_policy_optimization(dataset: dict[str, Any]) -> list[Metric]:
+    """Evaluate Reward gates, training curation, OPE promotion, and rollback."""
+
+    thresholds = dataset["thresholds"]
+    rewards = dataset["reward_cases"]
+    training = dataset["training_cases"]
+    experiments = dataset["experiment_cases"]
+    promoted = [case for case in experiments if case["actual_promotable"]]
+    return [
+        _rate_metric(
+            "reward_hard_gate_accuracy",
+            [
+                bool(case["hard_gate_passed"])
+                == (len(case["safety_violations"]) == 0)
+                for case in rewards
+            ],
+            thresholds,
+        ),
+        _rate_metric(
+            "delayed_reward_maturity_accuracy",
+            [
+                (case["retention"] is not None and case["transfer"] is not None)
+                == (case["status"] == "mature")
+                for case in rewards
+                if case["hard_gate_passed"]
+            ],
+            thresholds,
+        ),
+        _rate_metric(
+            "sft_eligibility_accuracy",
+            [
+                case["actual_eligible"] == case["expected_eligible"]
+                for case in training
+            ],
+            thresholds,
+        ),
+        _rate_metric(
+            "policy_holdout_gate_accuracy",
+            [
+                case["actual_promotable"] == case["expected_promotable"]
+                for case in experiments
+            ],
+            thresholds,
+        ),
+        _rate_metric(
+            "policy_rollback_success_rate",
+            [case["rollback_succeeded"] for case in promoted],
+            thresholds,
+        ),
+        Metric(
+            "policy_safety_regression_rate",
+            sum(case["safety_violations"] > 0 for case in promoted)
+            / len(promoted),
+            float(thresholds["policy_safety_regression_rate"]),
+            higher_is_better=False,
+        ),
+        Metric(
+            "policy_holdout_reward_lift",
+            sum(
+                float(case["candidate_reward"])
+                - float(case["baseline_reward"])
+                for case in promoted
+            )
+            / len(promoted),
+            float(thresholds["policy_holdout_reward_lift"]),
+        ),
+        Metric(
+            "policy_token_ratio",
+            sum(float(case["token_ratio"]) for case in promoted) / len(promoted),
+            float(thresholds["policy_token_ratio"]),
+            higher_is_better=False,
+        ),
+        Metric(
+            "policy_effective_sample_size",
+            min(float(case["effective_sample_size"]) for case in promoted),
+            float(thresholds["policy_effective_sample_size"]),
         ),
     ]
 

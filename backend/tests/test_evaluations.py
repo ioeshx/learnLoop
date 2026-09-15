@@ -12,6 +12,9 @@ DELEGATION_DATASET = (
     Path(__file__).parents[1] / "evals" / "datasets" / "delegation_v1.json"
 )
 SKILLS_DATASET = Path(__file__).parents[1] / "evals" / "datasets" / "skills_v1.json"
+OPTIMIZATION_DATASET = (
+    Path(__file__).parents[1] / "evals" / "datasets" / "optimization_v1.json"
+)
 
 
 def test_v1_evaluation_dataset_meets_all_thresholds(tmp_path: Path) -> None:
@@ -79,3 +82,18 @@ def test_reflection_skill_evaluation_dataset_meets_frozen_gates() -> None:
     assert values["skill_scope_safety_rate"] == 1.0
     assert values["skill_task_success_lift"] == 0.333333
     assert values["skill_tool_call_ratio"] == 0.636364
+
+
+def test_policy_optimization_dataset_meets_frozen_gates() -> None:
+    report = run(OPTIMIZATION_DATASET, now=datetime(2026, 9, 18, tzinfo=UTC))
+    values = {metric["name"]: metric["value"] for metric in report.metrics}
+
+    assert report.dataset_version == "optimization-1.0.0"
+    assert report.passed is True
+    assert values["reward_hard_gate_accuracy"] == 1.0
+    assert values["delayed_reward_maturity_accuracy"] == 1.0
+    assert values["sft_eligibility_accuracy"] == 1.0
+    assert values["policy_holdout_gate_accuracy"] == 1.0
+    assert values["policy_safety_regression_rate"] == 0.0
+    assert values["policy_holdout_reward_lift"] == 0.17
+    assert values["policy_token_ratio"] == 1.02

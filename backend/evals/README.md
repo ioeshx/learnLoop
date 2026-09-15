@@ -9,6 +9,8 @@
   duplicate prevention、fallback 和同预算成本冻结集。
 - `datasets/skills_v1.json`：Reflection provenance、人工审核、scope-safe recall、
   degradation、版本回滚和 Skill/no-Skill ablation 冻结集。
+- `datasets/optimization_v1.json`：Reward hard gate、delayed outcome、SFT eligibility、
+  holdout promotion、effective sample size、成本与 rollback 冻结集。
 - `evaluators/core.py`：无网络、确定性的指标实现。
 - `runner.py`：加载数据集、生成报告并汇总门禁结果。
 - `reports/`：本地生成的 JSON 报告；报告不提交 Git。
@@ -52,4 +54,12 @@ Reflection / Skill Library 专项评测：
 uv run --project backend python scripts/run_evals.py \
   --dataset backend/evals/datasets/skills_v1.json \
   --output backend/evals/reports/skills-latest.json
+```
+
+Policy optimization / Agentic RL 专项评测：
+
+```bash
+uv run --project backend python scripts/run_evals.py \
+  --dataset backend/evals/datasets/optimization_v1.json \
+  --output backend/evals/reports/optimization-latest.json
 ```
