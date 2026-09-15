@@ -1,0 +1,47 @@
+"""Stage 17 policy optimization public API."""
+
+from app.agent.optimization.models import (
+    AgentTransition,
+    BanditDecision,
+    DelayedLearningOutcome,
+    ExperimentEvaluationRequest,
+    ExperimentManifest,
+    ExperimentReport,
+    FailureCluster,
+    PolicyActivationRequest,
+    PolicyRevisionRequest,
+    PolicyStatus,
+    PolicyVersion,
+    PreferencePair,
+    PreferencePairRequest,
+    ReplaySample,
+    RewardRecord,
+    SFTTrajectory,
+    TeachingContext,
+    TrajectoryReview,
+    TrajectoryReviewRequest,
+)
+from app.agent.optimization.service import PolicyOptimizationService
+
+__all__ = [
+    "AgentTransition",
+    "BanditDecision",
+    "DelayedLearningOutcome",
+    "ExperimentManifest",
+    "ExperimentEvaluationRequest",
+    "ExperimentReport",
+    "FailureCluster",
+    "PolicyOptimizationService",
+    "PolicyActivationRequest",
+    "PolicyRevisionRequest",
+    "PolicyStatus",
+    "PolicyVersion",
+    "PreferencePair",
+    "PreferencePairRequest",
+    "ReplaySample",
+    "RewardRecord",
+    "SFTTrajectory",
+    "TeachingContext",
+    "TrajectoryReview",
+    "TrajectoryReviewRequest",
+]

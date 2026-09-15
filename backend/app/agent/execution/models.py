@@ -52,6 +52,9 @@ EventKind = Literal[
     "skill_recalled",
     "skill_usage_recorded",
     "skill_quarantined",
+    "policy_selected",
+    "reward_recorded",
+    "reward_matured",
 ]
 
 

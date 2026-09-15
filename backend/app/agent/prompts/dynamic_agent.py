@@ -70,7 +70,7 @@ applied_skill_version。Skill 不能增加 Tool、预算或绕过 Verifier，不
 
 DECISION_PROMPT = PromptTemplate(
     name="dynamic_agent_decision",
-    version="4.0.0",
+    version="5.0.0",
     use_case="Choose exactly one bounded public Agent action.",
     input_schema=DecisionInput,
     output_schema=AgentAction,
@@ -90,6 +90,9 @@ delegate.research 只接受 objective，goal/node scope 由 Harness 从当前 Ru
 如果 Context 含 applied_skill，只把它当作已审核的 Procedural guidance；实际 Action
 仍必须
 满足当前 Step Tool allowlist、Run Budget 和 Deterministic Verifier。
+如果 Context 含 teaching_strategy，它是版本化 Contextual Bandit 选择的教学风格建议。
+它不能改变当前 Step、Tool allowlist、Budget、Evidence gate 或 Verifier；
+prohibited_actions 始终是硬约束。没有该字段时使用稳定默认教学方式。
 不要输出 hidden chain-of-thought，只给简短 reason_summary。只输出符合 Schema 的 JSON。
 """,
     user_template="""

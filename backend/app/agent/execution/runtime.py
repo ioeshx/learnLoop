@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from app.agent.delegation import DelegationService
     from app.agent.dynamic.kernel import DynamicAgentKernel
     from app.agent.experience import ReflectionSkillService
+    from app.agent.optimization import PolicyOptimizationService
     from app.agent.research import ResearchTutor
 
 _INITIAL = object()
@@ -65,6 +66,8 @@ class AgentRuntime:
     experience: ReflectionSkillService | None = None
     context_debug_enabled: bool = False
     skill_admin_enabled: bool = False
+    optimization: PolicyOptimizationService | None = None
+    policy_admin_enabled: bool = False
     _tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     _task_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -127,6 +130,23 @@ class AgentRuntime:
                     yield event
                 for event in await self.experience.process_run(run.run_id):
                     yield event
+            if self.optimization is not None:
+                reward = await self.optimization.evaluate_terminal_run(run.run_id)
+                prior_events = await self.run_store.list_events(run.run_id)
+                if reward is not None and not any(
+                    item.event == "reward_recorded" for item in prior_events
+                ):
+                    yield await self.run_store.append_event(
+                        run.run_id,
+                        "reward_recorded",
+                        data={
+                            "reward_id": reward.id,
+                            "status": reward.status,
+                            "hard_gate_passed": reward.hard_gate_passed,
+                            "optimization_score": reward.optimization_score,
+                            "safety_violations": reward.safety_violations,
+                        },
+                    )
             return
         await self.run_store.set_status(run.run_id, "running")
         yield await self.run_store.append_event(
@@ -531,6 +551,7 @@ async def open_agent_runtime(
     from app.agent.dynamic.verifier import DeterministicVerifier
     from app.agent.experience import ReflectionSkillService
     from app.agent.memory import MemoryService
+    from app.agent.optimization import PolicyOptimizationService
 
     settings.ensure_runtime_directories()
     learning_tools = LearningTools(dependencies)
@@ -550,6 +571,12 @@ async def open_agent_runtime(
             quarantine_min_uses=settings.agent_skill_quarantine_min_uses,
             quarantine_success_rate=settings.agent_skill_quarantine_success_rate,
         )
+        optimization_service = PolicyOptimizationService(
+            run_store,
+            enabled=settings.agent_policy_optimization_enabled,
+            expected_latency_ms=settings.agent_policy_expected_latency_ms,
+        )
+        await optimization_service.ensure_default_policy()
         delegation_service = (
             DelegationService(
                 store=run_store,
@@ -601,6 +628,7 @@ async def open_agent_runtime(
                     verifier=DeterministicVerifier(),
                     memory=memory_service,
                     experience=experience_service,
+                    optimization=optimization_service,
                     budget=RunBudget(
                         max_steps=settings.agent_max_steps,
                         max_model_calls=settings.agent_max_model_calls,
@@ -623,6 +651,8 @@ async def open_agent_runtime(
             experience=experience_service,
             context_debug_enabled=settings.agent_context_debug_full,
             skill_admin_enabled=settings.agent_skill_admin_enabled,
+            optimization=optimization_service,
+            policy_admin_enabled=settings.agent_policy_admin_enabled,
         )
         if model is not None:
             model.set_observer(run_store.record_model_call)

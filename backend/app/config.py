@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     agent_skill_recall_limit: int = Field(default=3, ge=1, le=10)
     agent_skill_quarantine_min_uses: int = Field(default=3, ge=1, le=100)
     agent_skill_quarantine_success_rate: float = Field(default=0.5, ge=0, le=1)
+    agent_policy_optimization_enabled: bool = False
+    agent_policy_admin_enabled: bool = True
+    agent_policy_expected_latency_ms: float = Field(default=30_000, gt=0)
     embedding_provider: Literal["local", "openai_compatible"] = "local"
     embedding_model: str = "text-embedding-3-small"
     embedding_api_key: SecretStr | None = None

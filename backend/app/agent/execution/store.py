@@ -225,6 +225,75 @@ class SqliteAgentRunStore:
             );
             CREATE INDEX IF NOT EXISTS ix_learnloop_skill_usages_skill_created
                 ON learnloop_skill_usages (skill_id, created_at);
+            CREATE TABLE IF NOT EXISTS learnloop_policy_versions (
+                policy_id TEXT PRIMARY KEY,
+                family TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                policy_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE (family, version)
+            );
+            CREATE INDEX IF NOT EXISTS ix_learnloop_policy_versions_status
+                ON learnloop_policy_versions (family, status, version);
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_learnloop_policy_family_active
+                ON learnloop_policy_versions (family) WHERE status = 'active';
+            CREATE TABLE IF NOT EXISTS learnloop_bandit_statistics (
+                policy_id TEXT NOT NULL,
+                arm_id TEXT NOT NULL,
+                matrix_json TEXT NOT NULL,
+                target_json TEXT NOT NULL,
+                observations INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (policy_id, arm_id),
+                FOREIGN KEY (policy_id) REFERENCES learnloop_policy_versions(policy_id)
+                    ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS learnloop_bandit_decisions (
+                decision_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                plan_step_id TEXT NOT NULL,
+                decision_point_id TEXT NOT NULL,
+                policy_id TEXT NOT NULL,
+                reward_id TEXT,
+                decision_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE (run_id, decision_point_id),
+                FOREIGN KEY (run_id) REFERENCES learnloop_agent_runs(run_id)
+                    ON DELETE CASCADE,
+                FOREIGN KEY (policy_id) REFERENCES learnloop_policy_versions(policy_id)
+                    ON DELETE RESTRICT
+            );
+            CREATE TABLE IF NOT EXISTS learnloop_rewards (
+                reward_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL,
+                reward_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES learnloop_agent_runs(run_id)
+                    ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS learnloop_trajectory_reviews (
+                run_id TEXT PRIMARY KEY,
+                decision TEXT NOT NULL,
+                review_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES learnloop_agent_runs(run_id)
+                    ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS learnloop_preference_pairs (
+                pair_id TEXT PRIMARY KEY,
+                pair_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS learnloop_policy_experiments (
+                experiment_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                manifest_json TEXT NOT NULL,
+                report_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             """
         )
         await self._connection.commit()
@@ -720,6 +789,493 @@ class SqliteAgentRunStore:
         rows = await cursor.fetchall()
         await cursor.close()
         return [str(row["usage_json"]) for row in rows]
+
+    async def create_policy_version(
+        self,
+        *,
+        policy_id: str,
+        family: str,
+        version: int,
+        status: str,
+        policy_json: str,
+        created_at: datetime,
+    ) -> bool:
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                """
+                INSERT OR IGNORE INTO learnloop_policy_versions (
+                    policy_id, family, version, status, policy_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    policy_id,
+                    family,
+                    version,
+                    status,
+                    policy_json,
+                    created_at.isoformat(),
+                ),
+            )
+            created = cursor.rowcount == 1
+            await cursor.close()
+            await self._connection.commit()
+            return created
+
+    async def list_policy_versions(self) -> list[str]:
+        cursor = await self._connection.execute(
+            "SELECT policy_json FROM learnloop_policy_versions "
+            "ORDER BY family, version DESC"
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [str(row["policy_json"]) for row in rows]
+
+    async def replace_policy_version(
+        self,
+        *,
+        policy_id: str,
+        expected_status: str,
+        expected_version: int,
+        status: str,
+        policy_json: str,
+    ) -> bool:
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                """
+                UPDATE learnloop_policy_versions
+                SET status = ?, policy_json = ?
+                WHERE policy_id = ? AND status = ? AND version = ?
+                """,
+                (
+                    status,
+                    policy_json,
+                    policy_id,
+                    expected_status,
+                    expected_version,
+                ),
+            )
+            changed = cursor.rowcount == 1
+            await cursor.close()
+            await self._connection.commit()
+            return changed
+
+    async def activate_policy_version(
+        self,
+        *,
+        family: str,
+        policy_id: str,
+        expected_status: str,
+        expected_version: int,
+        policy_json: str,
+        disabled_policy_json: dict[str, str],
+    ) -> bool:
+        """Atomically switch the active Policy while preserving rollback versions."""
+
+        async with self._write_lock:
+            await self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = await self._connection.execute(
+                    """
+                    SELECT policy_id, version FROM learnloop_policy_versions
+                    WHERE family = ? AND status = 'active'
+                    """,
+                    (family,),
+                )
+                current = await cursor.fetchall()
+                await cursor.close()
+                current_ids = {str(row["policy_id"]) for row in current}
+                if current_ids != set(disabled_policy_json):
+                    await self._connection.rollback()
+                    return False
+                for row in current:
+                    current_id = str(row["policy_id"])
+                    cursor = await self._connection.execute(
+                        """
+                        UPDATE learnloop_policy_versions
+                        SET status = 'disabled', policy_json = ?
+                        WHERE policy_id = ? AND version = ? AND status = 'active'
+                        """,
+                        (
+                            disabled_policy_json[current_id],
+                            current_id,
+                            int(row["version"]),
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        await cursor.close()
+                        await self._connection.rollback()
+                        return False
+                    await cursor.close()
+                cursor = await self._connection.execute(
+                    """
+                    UPDATE learnloop_policy_versions
+                    SET status = 'active', policy_json = ?
+                    WHERE policy_id = ? AND status = ? AND version = ?
+                    """,
+                    (policy_json, policy_id, expected_status, expected_version),
+                )
+                changed = cursor.rowcount == 1
+                await cursor.close()
+                if not changed:
+                    await self._connection.rollback()
+                    return False
+                await self._connection.commit()
+                return True
+            except Exception:
+                await self._connection.rollback()
+                raise
+
+    async def get_bandit_statistics(
+        self, policy_id: str, arm_id: str
+    ) -> dict[str, object] | None:
+        cursor = await self._connection.execute(
+            """
+            SELECT matrix_json, target_json, observations
+            FROM learnloop_bandit_statistics
+            WHERE policy_id = ? AND arm_id = ?
+            """,
+            (policy_id, arm_id),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        if row is None:
+            return None
+        return {
+            "matrix": json.loads(str(row["matrix_json"])),
+            "target": json.loads(str(row["target_json"])),
+            "observations": int(row["observations"]),
+        }
+
+    async def apply_bandit_reward(
+        self,
+        *,
+        decision_id: str,
+        policy_id: str,
+        arm_id: str,
+        vector: list[float],
+        reward: float,
+        decision_json: str,
+        reward_id: str,
+    ) -> bool:
+        """Apply one reward to LinUCB sufficient statistics exactly once.
+
+        The Decision link is the idempotency marker. Its update and the ``A``/``b``
+        update share one ``BEGIN IMMEDIATE`` transaction, so concurrent workers
+        cannot double-count a delayed outcome or overwrite each other's statistics.
+        """
+
+        async with self._write_lock:
+            await self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = await self._connection.execute(
+                    """
+                    SELECT reward_id FROM learnloop_bandit_decisions
+                    WHERE decision_id = ?
+                    """,
+                    (decision_id,),
+                )
+                decision = await cursor.fetchone()
+                await cursor.close()
+                if decision is None or decision["reward_id"] is not None:
+                    await self._connection.rollback()
+                    return False
+                cursor = await self._connection.execute(
+                    """
+                    SELECT matrix_json, target_json, observations
+                    FROM learnloop_bandit_statistics
+                    WHERE policy_id = ? AND arm_id = ?
+                    """,
+                    (policy_id, arm_id),
+                )
+                row = await cursor.fetchone()
+                await cursor.close()
+                dimension = len(vector)
+                matrix = (
+                    json.loads(str(row["matrix_json"]))
+                    if row is not None
+                    else [
+                        [
+                            1.0 if row_index == column_index else 0.0
+                            for column_index in range(dimension)
+                        ]
+                        for row_index in range(dimension)
+                    ]
+                )
+                target = (
+                    json.loads(str(row["target_json"]))
+                    if row is not None
+                    else [0.0] * dimension
+                )
+                for row_index in range(dimension):
+                    target[row_index] += reward * vector[row_index]
+                    for column_index in range(dimension):
+                        matrix[row_index][column_index] += (
+                            vector[row_index] * vector[column_index]
+                        )
+                await self._connection.execute(
+                    """
+                    INSERT INTO learnloop_bandit_statistics (
+                        policy_id, arm_id, matrix_json, target_json,
+                        observations, updated_at
+                    ) VALUES (?, ?, ?, ?, 1, ?)
+                    ON CONFLICT(policy_id, arm_id) DO UPDATE SET
+                        matrix_json = excluded.matrix_json,
+                        target_json = excluded.target_json,
+                        observations = learnloop_bandit_statistics.observations + 1,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        policy_id,
+                        arm_id,
+                        json.dumps(matrix),
+                        json.dumps(target),
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                cursor = await self._connection.execute(
+                    """
+                    UPDATE learnloop_bandit_decisions
+                    SET decision_json = ?, reward_id = ?
+                    WHERE decision_id = ? AND reward_id IS NULL
+                    """,
+                    (decision_json, reward_id, decision_id),
+                )
+                changed = cursor.rowcount == 1
+                await cursor.close()
+                if not changed:
+                    await self._connection.rollback()
+                    return False
+                await self._connection.commit()
+                return True
+            except Exception:
+                await self._connection.rollback()
+                raise
+
+    async def save_bandit_decision(
+        self,
+        *,
+        run_id: str,
+        plan_step_id: str,
+        decision_point_id: str,
+        decision_id: str,
+        policy_id: str,
+        decision_json: str,
+    ) -> bool:
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                """
+                INSERT OR IGNORE INTO learnloop_bandit_decisions (
+                    decision_id, run_id, plan_step_id, decision_point_id,
+                    policy_id, decision_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    decision_id,
+                    run_id,
+                    plan_step_id,
+                    decision_point_id,
+                    policy_id,
+                    decision_json,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+            created = cursor.rowcount == 1
+            await cursor.close()
+            await self._connection.commit()
+            return created
+
+    async def get_bandit_decision(
+        self, run_id: str, decision_point_id: str
+    ) -> str | None:
+        cursor = await self._connection.execute(
+            "SELECT decision_json FROM learnloop_bandit_decisions "
+            "WHERE run_id = ? AND decision_point_id = ?",
+            (run_id, decision_point_id),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        return str(row["decision_json"]) if row is not None else None
+
+    async def list_bandit_decisions(
+        self, *, run_id: str | None = None
+    ) -> list[str]:
+        if run_id is None:
+            cursor = await self._connection.execute(
+                "SELECT decision_json FROM learnloop_bandit_decisions "
+                "ORDER BY created_at"
+            )
+        else:
+            cursor = await self._connection.execute(
+                "SELECT decision_json FROM learnloop_bandit_decisions "
+                "WHERE run_id = ? ORDER BY created_at",
+                (run_id,),
+            )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [str(row["decision_json"]) for row in rows]
+
+    async def save_reward(
+        self,
+        *,
+        reward_id: str,
+        run_id: str,
+        status: str,
+        reward_json: str,
+        created_at: datetime,
+    ) -> bool:
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                """
+                INSERT OR IGNORE INTO learnloop_rewards (
+                    reward_id, run_id, status, reward_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    reward_id,
+                    run_id,
+                    status,
+                    reward_json,
+                    created_at.isoformat(),
+                    created_at.isoformat(),
+                ),
+            )
+            created = cursor.rowcount == 1
+            await cursor.close()
+            await self._connection.commit()
+            return created
+
+    async def get_reward(self, run_id: str) -> str | None:
+        cursor = await self._connection.execute(
+            "SELECT reward_json FROM learnloop_rewards WHERE run_id = ?", (run_id,)
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        return str(row["reward_json"]) if row is not None else None
+
+    async def list_rewards(self) -> list[str]:
+        cursor = await self._connection.execute(
+            "SELECT reward_json FROM learnloop_rewards ORDER BY created_at DESC"
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [str(row["reward_json"]) for row in rows]
+
+    async def replace_reward(
+        self,
+        *,
+        run_id: str,
+        expected_status: str,
+        status: str,
+        reward_json: str,
+    ) -> bool:
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                """
+                UPDATE learnloop_rewards
+                SET status = ?, reward_json = ?, updated_at = ?
+                WHERE run_id = ? AND status = ?
+                """,
+                (
+                    status,
+                    reward_json,
+                    datetime.now(UTC).isoformat(),
+                    run_id,
+                    expected_status,
+                ),
+            )
+            changed = cursor.rowcount == 1
+            await cursor.close()
+            await self._connection.commit()
+            return changed
+
+    async def save_trajectory_review(
+        self,
+        *,
+        run_id: str,
+        decision: str,
+        review_json: str,
+        created_at: datetime,
+    ) -> None:
+        async with self._write_lock:
+            await self._connection.execute(
+                """
+                INSERT INTO learnloop_trajectory_reviews (
+                    run_id, decision, review_json, created_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    decision = excluded.decision,
+                    review_json = excluded.review_json,
+                    created_at = excluded.created_at
+                """,
+                (run_id, decision, review_json, created_at.isoformat()),
+            )
+            await self._connection.commit()
+
+    async def get_trajectory_review(self, run_id: str) -> str | None:
+        cursor = await self._connection.execute(
+            "SELECT review_json FROM learnloop_trajectory_reviews WHERE run_id = ?",
+            (run_id,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        return str(row["review_json"]) if row is not None else None
+
+    async def save_preference_pair(self, pair_id: str, pair_json: str) -> None:
+        async with self._write_lock:
+            await self._connection.execute(
+                """
+                INSERT INTO learnloop_preference_pairs (pair_id, pair_json, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (pair_id, pair_json, datetime.now(UTC).isoformat()),
+            )
+            await self._connection.commit()
+
+    async def list_preference_pairs(self) -> list[str]:
+        cursor = await self._connection.execute(
+            "SELECT pair_json FROM learnloop_preference_pairs ORDER BY created_at DESC"
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [str(row["pair_json"]) for row in rows]
+
+    async def save_policy_experiment(
+        self,
+        *,
+        experiment_id: str,
+        status: str,
+        manifest_json: str,
+        report_json: str,
+    ) -> None:
+        async with self._write_lock:
+            await self._connection.execute(
+                """
+                INSERT INTO learnloop_policy_experiments (
+                    experiment_id, status, manifest_json, report_json, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(experiment_id) DO UPDATE SET
+                    status = excluded.status,
+                    manifest_json = excluded.manifest_json,
+                    report_json = excluded.report_json
+                """,
+                (
+                    experiment_id,
+                    status,
+                    manifest_json,
+                    report_json,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+            await self._connection.commit()
+
+    async def list_policy_experiments(self) -> list[str]:
+        cursor = await self._connection.execute(
+            "SELECT report_json FROM learnloop_policy_experiments "
+            "ORDER BY created_at DESC"
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [str(row["report_json"]) for row in rows]
 
     async def set_status(
         self,

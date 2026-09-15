@@ -32,6 +32,8 @@ from app.agent.execution.models import AgentEvent, AgentRun
 from app.agent.execution.store import SqliteAgentRunStore
 from app.agent.experience import ReflectionSkillService, SkillRecall
 from app.agent.memory import MemoryService
+from app.agent.optimization import PolicyOptimizationService
+from app.agent.optimization.service import teaching_context
 from app.application.services import DEFAULT_USER_ID
 
 
@@ -54,6 +56,7 @@ class DynamicAgentKernel:
         budget: RunBudget,
         memory: MemoryService | None = None,
         experience: ReflectionSkillService | None = None,
+        optimization: PolicyOptimizationService | None = None,
         allow_write_tools: bool = False,
         store_full_context: bool = False,
     ) -> None:
@@ -65,6 +68,7 @@ class DynamicAgentKernel:
         self.default_budget = budget
         self.memory = memory
         self.experience = experience
+        self.optimization = optimization
         self.allow_write_tools = allow_write_tools
         self.store_full_context = store_full_context
 
@@ -802,8 +806,71 @@ class DynamicAgentKernel:
             skill = await self.experience.get_skill(state.plan.applied_skill_id)
             if skill is not None and skill.version == state.plan.applied_skill_version:
                 applied_skill = _skill_record_context(skill)
+        teaching_strategy: dict[str, object] | None = None
+        if self.optimization is not None:
+            step_index = next(
+                index
+                for index, candidate in enumerate(state.plan.steps, start=1)
+                if candidate.id == step.id
+            )
+            decision = await self.optimization.select_strategy(
+                run_id=state.run_id,
+                plan_step_id=step.id,
+                decision_point_id=(
+                    f"plan:{state.plan.version}:step:{step.id}:attempt:{step.attempts}"
+                ),
+                context=teaching_context(
+                    state,
+                    step_index=step_index,
+                    allowed_tools=set(step.allowed_tools),
+                ),
+                allowed_tools=set(step.allowed_tools),
+            )
+            if decision is not None:
+                # Decision 必须解析其记录的 immutable Policy version；若此时发生
+                # promotion/rollback，不能误用新的 Active Policy Arm 内容。
+                policy = await self.optimization.get_policy(decision.policy_id)
+                arm = (
+                    next(item for item in policy.arms if item.id == decision.arm_id)
+                    if policy is not None
+                    else None
+                )
+                if arm is not None:
+                    teaching_strategy = {
+                        "decision_id": decision.id,
+                        "policy_id": decision.policy_id,
+                        "policy_version": decision.policy_version,
+                        "arm_id": arm.id,
+                        "instruction": arm.instruction,
+                        "prohibited_actions": arm.prohibited_actions,
+                        "propensity": decision.propensity,
+                    }
+                    events = await self.store.list_events(state.run_id)
+                    if not any(
+                        item.event == "policy_selected"
+                        and item.data.get("decision_id") == decision.id
+                        for item in events
+                    ):
+                        await self.store.append_event(
+                            state.run_id,
+                            "policy_selected",
+                            node=step.id,
+                            data={
+                                "decision_id": decision.id,
+                                "policy_id": decision.policy_id,
+                                "policy_version": decision.policy_version,
+                                "arm_id": decision.arm_id,
+                                "propensity": decision.propensity,
+                                "exploratory": decision.exploratory,
+                            },
+                        )
         package = await self.context.compile(
-            request, state, step, tools, applied_skill=applied_skill
+            request,
+            state,
+            step,
+            tools,
+            applied_skill=applied_skill,
+            teaching_strategy=teaching_strategy,
         )
         event = await self._persist_context(package, node=step.id)
         return package, event

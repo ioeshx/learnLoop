@@ -421,6 +421,7 @@ class ContextCompiler:
         step: PlanStep,
         tools: list[ToolSpec],
         applied_skill: dict[str, object] | None = None,
+        teaching_strategy: dict[str, object] | None = None,
     ) -> ContextPackage:
         if request.run_id != state.run_id:
             raise ContextReferenceError("ContextRequest belongs to another Run")
@@ -500,6 +501,7 @@ class ContextCompiler:
             "available_tools": [_compact_tool(item) for item in selected_tools],
             "evidence": [_evidence_view(item) for item in evidence],
             "applied_skill": applied_skill,
+            "teaching_strategy": None,
             "memory": [],
             "recent_observations": [],
             "completed_steps": [],
@@ -513,6 +515,19 @@ class ContextCompiler:
             raise ContextBudgetError(
                 "mandatory Context partitions exceed the input token limit"
             )
+        if teaching_strategy is not None:
+            values["teaching_strategy"] = teaching_strategy
+            if self._count(values) > input_limit:
+                values["teaching_strategy"] = None
+                strategy_id = str(teaching_strategy.get("decision_id", "unknown"))
+                omitted.append(f"policy-decision:{strategy_id}")
+                truncations.append(
+                    ContextTruncation(
+                        partition="teaching_strategy",
+                        reason="input_token_budget",
+                        omitted_source_ids=[f"policy-decision:{strategy_id}"],
+                    )
+                )
 
         memory_items = await self._retrieve_memory(request, state)
         memory_kept, memory_omitted = self._pack_items(
@@ -590,6 +605,11 @@ class ContextCompiler:
             if "id" in item
         ]
         included_ids.extend(str(item["id"]) for item in memory_kept)
+        strategy_value = values["teaching_strategy"]
+        if isinstance(strategy_value, dict):
+            included_ids.append(
+                f"policy-decision:{strategy_value['decision_id']}"
+            )
         timestamps = [
             datetime.fromisoformat(str(item["created_at"]))
             for item in [*evidence, *recent_kept]
@@ -845,6 +865,7 @@ _PARTITION_PRIORITIES = {
     "available_tools": 100,
     "evidence": 95,
     "applied_skill": 96,
+    "teaching_strategy": 82,
     "memory": 88,
     "recent_observations": 80,
     "completed_steps": 60,
