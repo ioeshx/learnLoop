@@ -10,6 +10,16 @@ from fastapi.responses import StreamingResponse
 
 from app.agent.execution import AgentEvent, AgentRun, AgentRuntime, EngineVersion
 from app.agent.execution.comparison import compare_runs
+from app.agent.experience import (
+    ReflectionSkillService,
+    RunReflection,
+    SkillRecord,
+    SkillReviewRequest,
+    SkillRevisionRequest,
+    SkillStatus,
+    SkillStatusRequest,
+    SkillUsage,
+)
 from app.api.dependencies import AgentRuntimeDep
 from app.api.schemas import (
     AgentEventResponse,
@@ -127,6 +137,12 @@ async def get_agent_trace(
         if runtime.delegation is not None
         else []
     )
+    reflections = (
+        await runtime.experience.list_reflections(run_id=run.run_id)
+        if runtime.experience is not None
+        else []
+    )
+    raw_skill_usage = await runtime.run_store.get_skill_usage(run.run_id)
     return AgentTraceResponse(
         run=AgentRunResponse.from_execution(run),
         events=[AgentEventResponse.from_execution(event) for event in events],
@@ -146,7 +162,91 @@ async def get_agent_trace(
         ),
         delegations=delegations,
         child_runs=[AgentRunResponse.from_execution(child) for child in children],
+        reflections=reflections,
+        skill_usage=(
+            SkillUsage.model_validate_json(raw_skill_usage)
+            if raw_skill_usage is not None
+            else None
+        ),
     )
+
+
+@router.post("/runs/{run_id}/reflect", response_model=list[RunReflection])
+async def reflect_agent_run(
+    run_id: str, runtime: AgentRuntimeDep
+) -> list[RunReflection]:
+    await _get_run(runtime, run_id)
+    if runtime.experience is None:
+        raise HTTPException(status_code=503, detail="experience pipeline is disabled")
+    await runtime.experience.process_run(run_id)
+    return await runtime.experience.list_reflections(run_id=run_id)
+
+
+@router.get("/reflections", response_model=list[RunReflection])
+async def list_agent_reflections(
+    runtime: AgentRuntimeDep,
+    run_id: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+) -> list[RunReflection]:
+    if runtime.experience is None:
+        return []
+    return await runtime.experience.list_reflections(run_id=run_id, limit=limit)
+
+
+@router.get("/skills", response_model=list[SkillRecord])
+async def list_agent_skills(
+    runtime: AgentRuntimeDep,
+    skill_status: SkillStatus | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+) -> list[SkillRecord]:
+    if runtime.experience is None:
+        return []
+    return await runtime.experience.list_skills(status=skill_status, limit=limit)
+
+
+@router.post("/skills/{skill_id}/review", response_model=SkillRecord)
+async def review_agent_skill(
+    skill_id: str,
+    payload: SkillReviewRequest,
+    runtime: AgentRuntimeDep,
+) -> SkillRecord:
+    experience = _skill_admin(runtime)
+    try:
+        return await experience.review(skill_id, payload)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post("/skills/{skill_id}/status", response_model=SkillRecord)
+async def update_agent_skill_status(
+    skill_id: str,
+    payload: SkillStatusRequest,
+    runtime: AgentRuntimeDep,
+) -> SkillRecord:
+    experience = _skill_admin(runtime)
+    try:
+        return await experience.set_status(skill_id, payload)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post("/skills/{skill_id}/revisions", response_model=SkillRecord)
+async def revise_agent_skill(
+    skill_id: str,
+    payload: SkillRevisionRequest,
+    runtime: AgentRuntimeDep,
+) -> SkillRecord:
+    experience = _skill_admin(runtime)
+    try:
+        return await experience.revise(skill_id, payload)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.post("/runs/{run_id}/cancel", response_model=AgentRunResponse)
@@ -312,6 +412,22 @@ async def _get_run(runtime: AgentRuntime, run_id: str) -> AgentRun:
             detail="agent run was not found",
         )
     return run
+
+
+def _skill_admin(runtime: AgentRuntime) -> ReflectionSkillService:
+    """Return the internal Skill service only when management is explicitly enabled."""
+
+    if not runtime.skill_admin_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Skill management is disabled",
+        )
+    if runtime.experience is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="experience pipeline is disabled",
+        )
+    return runtime.experience
 
 
 def _parse_last_event_id(value: str | None) -> int:

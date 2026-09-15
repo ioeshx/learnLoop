@@ -147,7 +147,13 @@ export type AgentEventKind =
   | "delegation_completed"
   | "delegation_failed"
   | "delegation_cancelled"
-  | "delegation_reused";
+  | "delegation_reused"
+  | "reflection_created"
+  | "reflection_recalled"
+  | "skill_candidate_created"
+  | "skill_recalled"
+  | "skill_usage_recorded"
+  | "skill_quarantined";
 
 export type AgentEvent = {
   run_id: string;
@@ -269,6 +275,80 @@ export type AgentTrace = {
   context_snapshots: ContextSnapshot[];
   delegations: DelegationRecord[];
   child_runs: AgentRun[];
+  reflections: RunReflection[];
+  skill_usage: SkillUsage | null;
+};
+
+export type RunReflection = {
+  id: string;
+  run_id: string;
+  outcome: "success" | "failure";
+  problem_category: string;
+  evidence: Array<{
+    id: string;
+    kind: "observation" | "verification" | "terminal";
+    event_sequence: number;
+    observation_id: string | null;
+    summary: string;
+    content_sha256: string;
+  }>;
+  root_causes: Array<{ statement: string; evidence_ids: string[] }>;
+  improvements: Array<{ statement: string; evidence_ids: string[] }>;
+  applicability: string[];
+  strategy_key: string;
+  created_at: string;
+};
+
+export type SkillStatus =
+  | "candidate"
+  | "active"
+  | "rejected"
+  | "quarantined"
+  | "disabled";
+
+export type SkillRecord = {
+  id: string;
+  family_key: string;
+  name: string;
+  description: string;
+  version: number;
+  status: SkillStatus;
+  risk: "low" | "medium" | "high";
+  applicability: {
+    graph_kind: string;
+    objective_keywords: string[];
+    required_tools: string[];
+  };
+  prerequisites: string[];
+  steps: Array<{
+    order: number;
+    instruction: string;
+    allowed_tools: string[];
+    verifier: string;
+  }>;
+  source_run_ids: string[];
+  source_reflections: RunReflection[];
+  success_count: number;
+  failure_count: number;
+  average_tool_calls: number;
+  average_tokens: number;
+  valid_until: string | null;
+  review_note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SkillUsage = {
+  run_id: string;
+  skill_id: string;
+  skill_version: number;
+  status: string;
+  succeeded: boolean | null;
+  tool_calls: number;
+  tokens: number;
+  failure_type: string | null;
+  created_at: string;
+  completed_at: string | null;
 };
 
 export type ContextSnapshot = {
@@ -315,6 +395,8 @@ export type DynamicAgentPlan = {
   objective: string;
   version: number;
   change_reason: string | null;
+  applied_skill_id: string | null;
+  applied_skill_version: number | null;
   steps: Array<{
     id: string;
     objective: string;
@@ -843,6 +925,42 @@ export function fetchAgentRuns(): Promise<AgentRun[]> {
 
 export function fetchAgentTrace(runId: string): Promise<AgentTrace> {
   return apiRequest<AgentTrace>(`/agent/runs/${runId}/trace`);
+}
+
+export function fetchAgentSkills(): Promise<SkillRecord[]> {
+  return apiRequest<SkillRecord[]>("/agent/skills");
+}
+
+export function reviewAgentSkill(
+  skillId: string,
+  decision: "publish" | "reject",
+  expectedVersion: number,
+  note: string,
+): Promise<SkillRecord> {
+  return apiRequest<SkillRecord>(`/agent/skills/${skillId}/review`, {
+    method: "POST",
+    body: JSON.stringify({
+      decision,
+      expected_version: expectedVersion,
+      note,
+    }),
+  });
+}
+
+export function updateAgentSkillStatus(
+  skillId: string,
+  skillStatus: SkillStatus,
+  expectedVersion: number,
+  note: string,
+): Promise<SkillRecord> {
+  return apiRequest<SkillRecord>(`/agent/skills/${skillId}/status`, {
+    method: "POST",
+    body: JSON.stringify({
+      status: skillStatus,
+      expected_version: expectedVersion,
+      note,
+    }),
+  });
 }
 
 export async function downloadLearningData(): Promise<void> {

@@ -8,6 +8,7 @@ from pydantic.types import JsonValue
 from app.agent.delegation import DelegationRecord
 from app.agent.execution import AgentEvent, AgentRun
 from app.agent.execution.models import ModelCallTrace, ToolCallTrace
+from app.agent.experience import RunReflection, SkillUsage
 from app.application.models import (
     AttemptResult,
     DueReview,
@@ -498,6 +499,8 @@ class AgentTraceResponse(BaseModel):
     context_snapshots: list[dict[str, object]] = Field(default_factory=list)
     delegations: list[DelegationRecord] = Field(default_factory=list)
     child_runs: list[AgentRunResponse] = Field(default_factory=list)
+    reflections: list[RunReflection] = Field(default_factory=list)
+    skill_usage: SkillUsage | None = None
 
 
 class ResumeAgentRunRequest(RequestModel):

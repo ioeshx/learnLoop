@@ -72,6 +72,7 @@ export default function DashboardPage() {
       <nav className="page-nav">
         <Link href="/">← 返回首页</Link>
         <div className="nav-actions">
+          <Link href="/agent-skills">Agent Skills</Link>
           <Link href="/research">Research Tutor</Link>
           <Link href="/memories">Agent Memory</Link>
           <Link href="/reviews">今日复习</Link>

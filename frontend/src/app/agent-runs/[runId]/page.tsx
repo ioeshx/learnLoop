@@ -30,7 +30,7 @@ export default function AgentTracePage() {
     <main className="page-shell narrow-shell">
       <nav className="page-nav">
         <Link href="/dashboard">← 返回仪表盘</Link>
-        <span>Agent Trace</span>
+        <Link href="/agent-skills">Skill Library</Link>
       </nav>
       {error ? <p className="error-banner">{error}</p> : null}
       {!trace && !error ? <p className="loading-card">正在读取运行轨迹…</p> : null}
@@ -124,6 +124,37 @@ export default function AgentTracePage() {
                       {delegation.result.unresolved_questions.join("；")}
                     </small>
                   ) : null}
+                </div>
+              ))}
+            </section>
+          ) : null}
+
+          {trace.reflections.length || trace.skill_usage ? (
+            <section className="dashboard-card">
+              <p className="eyebrow">REFLECTION / SKILL</p>
+              <h2>Verified Experience</h2>
+              {trace.skill_usage ? (
+                <div className="trace-row">
+                  <strong>
+                    Applied Skill {trace.skill_usage.skill_id}@{trace.skill_usage.skill_version}
+                  </strong>
+                  <span>
+                    {trace.skill_usage.status} · success {String(trace.skill_usage.succeeded)}
+                  </span>
+                  <small>
+                    {trace.skill_usage.tool_calls} Tools · {trace.skill_usage.tokens} Tokens
+                  </small>
+                </div>
+              ) : null}
+              {trace.reflections.map((reflection) => (
+                <div className="trace-row" key={reflection.id}>
+                  <strong>{reflection.outcome} · {reflection.problem_category}</strong>
+                  <span>
+                    Evidence: {reflection.evidence.map((item) => `#${item.event_sequence}`).join("、")}
+                  </span>
+                  <small>
+                    {reflection.improvements.map((item) => item.statement).join("；") || "无改进候选"}
+                  </small>
                 </div>
               ))}
             </section>
