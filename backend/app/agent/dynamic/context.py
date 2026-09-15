@@ -308,6 +308,8 @@ class ContextCompiler:
         tools: list[ToolSpec],
         *,
         max_plan_steps: int,
+        candidate_skills: list[dict[str, object]] | None = None,
+        prior_reflections: list[dict[str, object]] | None = None,
     ) -> ContextPackage:
         """Compile the Planner input through the same partition and budget contract."""
 
@@ -329,8 +331,20 @@ class ContextCompiler:
             "initial_state": initial_state,
             "available_tools": [_compact_tool(item) for item in selected],
             "max_steps": max_plan_steps,
+            "candidate_skills": [],
+            "prior_reflections": [],
         }
         input_limit = request.token_budget - request.reserved_output_tokens
+        skill_items = candidate_skills or []
+        kept_skills, omitted_skills = self._pack_items(
+            values, "candidate_skills", skill_items, input_limit
+        )
+        values["candidate_skills"] = kept_skills
+        reflection_items = prior_reflections or []
+        kept_reflections, omitted_reflections = self._pack_items(
+            values, "prior_reflections", reflection_items, input_limit
+        )
+        values["prior_reflections"] = kept_reflections
         total_tokens = self._count(values)
         if total_tokens > input_limit:
             raise ContextBudgetError(
@@ -351,17 +365,44 @@ class ContextCompiler:
             partitions=[
                 ContextPartitionUsage(
                     name=name,
-                    priority=100,
-                    mandatory=True,
+                    priority=(90 if name == "prior_reflections" else 85)
+                    if name in {"prior_reflections", "candidate_skills"}
+                    else 100,
+                    mandatory=name not in {"prior_reflections", "candidate_skills"},
                     token_count=self._count(value),
                     item_count=len(value) if isinstance(value, list) else 1,
                 )
                 for name, value in values.items()
             ],
-            source_ids=[source_id],
-            omitted_source_ids=[],
+            source_ids=[
+                source_id,
+                *[f"skill:{item['id']}@{item['version']}" for item in kept_skills],
+                *[f"reflection:{item['id']}" for item in kept_reflections],
+            ],
+            omitted_source_ids=[*omitted_skills, *omitted_reflections],
             tool_names=[item.name for item in selected],
-            truncations=[],
+            truncations=(
+                [
+                    ContextTruncation(
+                        partition="candidate_skills",
+                        reason="input_token_budget",
+                        omitted_source_ids=omitted_skills,
+                    )
+                ]
+                if omitted_skills
+                else []
+            )
+            + (
+                [
+                    ContextTruncation(
+                        partition="prior_reflections",
+                        reason="input_token_budget",
+                        omitted_source_ids=omitted_reflections,
+                    )
+                ]
+                if omitted_reflections
+                else []
+            ),
             conflicts=[],
             input_hash=_stable_hash(
                 {
@@ -379,6 +420,7 @@ class ContextCompiler:
         state: DynamicAgentState,
         step: PlanStep,
         tools: list[ToolSpec],
+        applied_skill: dict[str, object] | None = None,
     ) -> ContextPackage:
         if request.run_id != state.run_id:
             raise ContextReferenceError("ContextRequest belongs to another Run")
@@ -457,6 +499,7 @@ class ContextCompiler:
             "usage": state.usage.model_dump(mode="json"),
             "available_tools": [_compact_tool(item) for item in selected_tools],
             "evidence": [_evidence_view(item) for item in evidence],
+            "applied_skill": applied_skill,
             "memory": [],
             "recent_observations": [],
             "completed_steps": [],
@@ -789,6 +832,7 @@ _MANDATORY_PARTITIONS = {
     "usage",
     "available_tools",
     "evidence",
+    "applied_skill",
 }
 _PARTITION_PRIORITIES = {
     "policy": 100,
@@ -800,6 +844,7 @@ _PARTITION_PRIORITIES = {
     "usage": 100,
     "available_tools": 100,
     "evidence": 95,
+    "applied_skill": 96,
     "memory": 88,
     "recent_observations": 80,
     "completed_steps": 60,

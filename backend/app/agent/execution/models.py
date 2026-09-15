@@ -46,6 +46,12 @@ EventKind = Literal[
     "delegation_failed",
     "delegation_cancelled",
     "delegation_reused",
+    "reflection_created",
+    "reflection_recalled",
+    "skill_candidate_created",
+    "skill_recalled",
+    "skill_usage_recorded",
+    "skill_quarantined",
 ]
 
 

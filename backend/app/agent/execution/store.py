@@ -186,6 +186,45 @@ class SqliteAgentRunStore:
             );
             CREATE INDEX IF NOT EXISTS ix_learnloop_delegations_parent_created
                 ON learnloop_delegations (parent_run_id, created_at);
+            CREATE TABLE IF NOT EXISTS learnloop_reflections (
+                reflection_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL UNIQUE,
+                outcome TEXT NOT NULL,
+                strategy_key TEXT NOT NULL,
+                reflection_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES learnloop_agent_runs(run_id)
+                    ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS ix_learnloop_reflections_strategy_outcome
+                ON learnloop_reflections (strategy_key, outcome, created_at);
+            CREATE TABLE IF NOT EXISTS learnloop_skills (
+                skill_id TEXT PRIMARY KEY,
+                family_key TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                skill_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (family_key, version)
+            );
+            CREATE INDEX IF NOT EXISTS ix_learnloop_skills_status_updated
+                ON learnloop_skills (status, updated_at);
+            CREATE TABLE IF NOT EXISTS learnloop_skill_usages (
+                run_id TEXT PRIMARY KEY,
+                skill_id TEXT NOT NULL,
+                skill_version INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                usage_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                FOREIGN KEY (run_id) REFERENCES learnloop_agent_runs(run_id)
+                    ON DELETE CASCADE,
+                FOREIGN KEY (skill_id) REFERENCES learnloop_skills(skill_id)
+                    ON DELETE RESTRICT
+            );
+            CREATE INDEX IF NOT EXISTS ix_learnloop_skill_usages_skill_created
+                ON learnloop_skill_usages (skill_id, created_at);
             """
         )
         await self._connection.commit()
@@ -424,9 +463,7 @@ class SqliteAgentRunStore:
             await cursor.close()
             await self._connection.commit()
 
-    async def get_delegation(
-        self, delegation_id: str
-    ) -> dict[str, object] | None:
+    async def get_delegation(self, delegation_id: str) -> dict[str, object] | None:
         cursor = await self._connection.execute(
             "SELECT * FROM learnloop_delegations WHERE delegation_id = ?",
             (delegation_id,),
@@ -449,9 +486,7 @@ class SqliteAgentRunStore:
         await cursor.close()
         return _delegation_from_row(row) if row is not None else None
 
-    async def list_delegations(
-        self, parent_run_id: str
-    ) -> list[dict[str, object]]:
+    async def list_delegations(self, parent_run_id: str) -> list[dict[str, object]]:
         cursor = await self._connection.execute(
             """
             SELECT * FROM learnloop_delegations
@@ -462,6 +497,229 @@ class SqliteAgentRunStore:
         rows = await cursor.fetchall()
         await cursor.close()
         return [_delegation_from_row(row) for row in rows]
+
+    async def save_reflection(
+        self,
+        *,
+        reflection_id: str,
+        run_id: str,
+        outcome: str,
+        strategy_key: str,
+        reflection_json: str,
+        created_at: datetime,
+    ) -> bool:
+        """Persist at most one evidence-bound Reflection for a Run."""
+
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                """
+                INSERT OR IGNORE INTO learnloop_reflections (
+                    reflection_id, run_id, outcome, strategy_key,
+                    reflection_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    reflection_id,
+                    run_id,
+                    outcome,
+                    strategy_key,
+                    reflection_json,
+                    created_at.isoformat(),
+                ),
+            )
+            created = cursor.rowcount == 1
+            await cursor.close()
+            await self._connection.commit()
+            return created
+
+    async def get_reflection_for_run(self, run_id: str) -> str | None:
+        cursor = await self._connection.execute(
+            "SELECT reflection_json FROM learnloop_reflections WHERE run_id = ?",
+            (run_id,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        return str(row["reflection_json"]) if row is not None else None
+
+    async def list_reflections(
+        self,
+        *,
+        run_id: str | None = None,
+        strategy_key: str | None = None,
+        outcome: str | None = None,
+        limit: int = 100,
+    ) -> list[str]:
+        clauses: list[str] = []
+        parameters: list[object] = []
+        if run_id is not None:
+            clauses.append("run_id = ?")
+            parameters.append(run_id)
+        if strategy_key is not None:
+            clauses.append("strategy_key = ?")
+            parameters.append(strategy_key)
+        if outcome is not None:
+            clauses.append("outcome = ?")
+            parameters.append(outcome)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        parameters.append(limit)
+        cursor = await self._connection.execute(
+            f"""SELECT reflection_json FROM learnloop_reflections {where}
+            ORDER BY created_at DESC LIMIT ?""",  # noqa: S608 -- clauses are fixed
+            parameters,
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [str(row["reflection_json"]) for row in rows]
+
+    async def create_skill(
+        self,
+        *,
+        skill_id: str,
+        family_key: str,
+        version: int,
+        status: str,
+        skill_json: str,
+        created_at: datetime,
+        updated_at: datetime,
+    ) -> bool:
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                """
+                INSERT OR IGNORE INTO learnloop_skills (
+                    skill_id, family_key, version, status, skill_json,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    skill_id,
+                    family_key,
+                    version,
+                    status,
+                    skill_json,
+                    created_at.isoformat(),
+                    updated_at.isoformat(),
+                ),
+            )
+            created = cursor.rowcount == 1
+            await cursor.close()
+            await self._connection.commit()
+            return created
+
+    async def get_skill(self, skill_id: str) -> str | None:
+        cursor = await self._connection.execute(
+            "SELECT skill_json FROM learnloop_skills WHERE skill_id = ?", (skill_id,)
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        return str(row["skill_json"]) if row is not None else None
+
+    async def list_skills(
+        self, *, status: str | None = None, limit: int = 100
+    ) -> list[str]:
+        if status is None:
+            cursor = await self._connection.execute(
+                "SELECT skill_json FROM learnloop_skills "
+                "ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            )
+        else:
+            cursor = await self._connection.execute(
+                "SELECT skill_json FROM learnloop_skills WHERE status = ? "
+                "ORDER BY updated_at DESC LIMIT ?",
+                (status, limit),
+            )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [str(row["skill_json"]) for row in rows]
+
+    async def replace_skill(
+        self,
+        *,
+        skill_id: str,
+        expected_version: int,
+        expected_statuses: set[str],
+        status: str,
+        skill_json: str,
+        updated_at: datetime,
+    ) -> bool:
+        """Apply a lifecycle change with immutable version and status CAS guards."""
+
+        placeholders = ",".join("?" for _ in expected_statuses)
+        parameters: list[object] = [
+            status,
+            skill_json,
+            updated_at.isoformat(),
+            skill_id,
+            expected_version,
+            *sorted(expected_statuses),
+        ]
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                f"""
+                UPDATE learnloop_skills
+                SET status = ?, skill_json = ?, updated_at = ?
+                WHERE skill_id = ? AND version = ?
+                  AND status IN ({placeholders})
+                """,  # noqa: S608 -- placeholders contain no user input
+                parameters,
+            )
+            changed = cursor.rowcount == 1
+            await cursor.close()
+            await self._connection.commit()
+            return changed
+
+    async def save_skill_usage(
+        self, *, run_id: str, skill_id: str, skill_version: int, usage_json: str
+    ) -> bool:
+        now = datetime.now(UTC).isoformat()
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                """
+                INSERT OR IGNORE INTO learnloop_skill_usages (
+                    run_id, skill_id, skill_version, status, usage_json, created_at
+                ) VALUES (?, ?, ?, 'running', ?, ?)
+                """,
+                (run_id, skill_id, skill_version, usage_json, now),
+            )
+            created = cursor.rowcount == 1
+            await cursor.close()
+            await self._connection.commit()
+            return created
+
+    async def get_skill_usage(self, run_id: str) -> str | None:
+        cursor = await self._connection.execute(
+            "SELECT usage_json FROM learnloop_skill_usages WHERE run_id = ?", (run_id,)
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        return str(row["usage_json"]) if row is not None else None
+
+    async def finish_skill_usage(
+        self, *, run_id: str, usage_json: str, completed_at: datetime
+    ) -> bool:
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                """
+                UPDATE learnloop_skill_usages
+                SET status = 'completed', usage_json = ?, completed_at = ?
+                WHERE run_id = ? AND status = 'running'
+                """,
+                (usage_json, completed_at.isoformat(), run_id),
+            )
+            changed = cursor.rowcount == 1
+            await cursor.close()
+            await self._connection.commit()
+            return changed
+
+    async def list_skill_usages(self, skill_id: str) -> list[str]:
+        cursor = await self._connection.execute(
+            "SELECT usage_json FROM learnloop_skill_usages "
+            "WHERE skill_id = ? AND status = 'completed' ORDER BY created_at",
+            (skill_id,),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [str(row["usage_json"]) for row in rows]
 
     async def set_status(
         self,
@@ -664,15 +922,11 @@ class SqliteAgentRunStore:
                 "sha256": str(row["sha256"]),
                 "created_at": str(row["created_at"]),
                 "expires_at": (
-                    str(row["expires_at"])
-                    if row["expires_at"] is not None
-                    else None
+                    str(row["expires_at"]) if row["expires_at"] is not None else None
                 ),
             }
 
-    async def get_context_artifact(
-        self, artifact_id: str
-    ) -> dict[str, object] | None:
+    async def get_context_artifact(self, artifact_id: str) -> dict[str, object] | None:
         cursor = await self._connection.execute(
             "SELECT * FROM learnloop_context_artifacts WHERE artifact_id = ?",
             (artifact_id,),
@@ -691,9 +945,7 @@ class SqliteAgentRunStore:
             "size_bytes": int(row["size_bytes"]),
             "created_at": str(row["created_at"]),
             "expires_at": (
-                str(row["expires_at"])
-                if row["expires_at"] is not None
-                else None
+                str(row["expires_at"]) if row["expires_at"] is not None else None
             ),
         }
 

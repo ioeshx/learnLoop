@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     agent_delegation_max_queries: int = Field(default=6, ge=1, le=30)
     agent_delegation_max_sources: int = Field(default=10, ge=1, le=50)
     agent_delegation_deadline_seconds: float = Field(default=60, gt=0, le=600)
+    agent_skill_library_enabled: bool = True
+    agent_skill_admin_enabled: bool = True
+    agent_skill_minimum_source_runs: int = Field(default=2, ge=2, le=20)
+    agent_skill_recall_limit: int = Field(default=3, ge=1, le=10)
+    agent_skill_quarantine_min_uses: int = Field(default=3, ge=1, le=100)
+    agent_skill_quarantine_success_rate: float = Field(default=0.5, ge=0, le=1)
     embedding_provider: Literal["local", "openai_compatible"] = "local"
     embedding_model: str = "text-embedding-3-small"
     embedding_api_key: SecretStr | None = None

@@ -34,6 +34,7 @@ from app.observability import bind_agent_run, reset_agent_run
 if TYPE_CHECKING:
     from app.agent.delegation import DelegationService
     from app.agent.dynamic.kernel import DynamicAgentKernel
+    from app.agent.experience import ReflectionSkillService
     from app.agent.research import ResearchTutor
 
 _INITIAL = object()
@@ -61,7 +62,9 @@ class AgentRuntime:
     retention_days: int
     dynamic_kernel: DynamicAgentKernel | None
     delegation: DelegationService | None = None
+    experience: ReflectionSkillService | None = None
     context_debug_enabled: bool = False
+    skill_admin_enabled: bool = False
     _tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     _task_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -119,6 +122,11 @@ class AgentRuntime:
                 logger.exception("dynamic_agent_run_failed")
             finally:
                 reset_agent_run(run_token)
+            if self.experience is not None:
+                for event in await self.experience.complete_usage(run.run_id):
+                    yield event
+                for event in await self.experience.process_run(run.run_id):
+                    yield event
             return
         await self.run_store.set_status(run.run_id, "running")
         yield await self.run_store.append_event(
@@ -521,6 +529,7 @@ async def open_agent_runtime(
     from app.agent.dynamic.policy import ModelAgentPolicy
     from app.agent.dynamic.tools import ToolExecutor, build_learning_tool_registry
     from app.agent.dynamic.verifier import DeterministicVerifier
+    from app.agent.experience import ReflectionSkillService
     from app.agent.memory import MemoryService
 
     settings.ensure_runtime_directories()
@@ -532,6 +541,14 @@ async def open_agent_runtime(
         run_store = await SqliteAgentRunStore.open(settings.checkpoint_path)
         memory_service = MemoryService(
             dependencies.uow_factory, clock=dependencies.clock
+        )
+        experience_service = ReflectionSkillService(
+            run_store,
+            enabled=settings.agent_skill_library_enabled,
+            minimum_source_runs=settings.agent_skill_minimum_source_runs,
+            recall_limit=settings.agent_skill_recall_limit,
+            quarantine_min_uses=settings.agent_skill_quarantine_min_uses,
+            quarantine_success_rate=settings.agent_skill_quarantine_success_rate,
         )
         delegation_service = (
             DelegationService(
@@ -583,6 +600,7 @@ async def open_agent_runtime(
                     ),
                     verifier=DeterministicVerifier(),
                     memory=memory_service,
+                    experience=experience_service,
                     budget=RunBudget(
                         max_steps=settings.agent_max_steps,
                         max_model_calls=settings.agent_max_model_calls,
@@ -602,7 +620,9 @@ async def open_agent_runtime(
                 else None
             ),
             delegation=delegation_service,
+            experience=experience_service,
             context_debug_enabled=settings.agent_context_debug_full,
+            skill_admin_enabled=settings.agent_skill_admin_enabled,
         )
         if model is not None:
             model.set_observer(run_store.record_model_call)

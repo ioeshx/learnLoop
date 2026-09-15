@@ -72,6 +72,8 @@ class ModelAgentPolicy:
                 "initial_state": values["initial_state"],
                 "available_tools": values["available_tools"],
                 "max_steps": values["max_steps"],
+                "candidate_skills": values.get("candidate_skills", []),
+                "prior_reflections": values.get("prior_reflections", []),
             },
             AgentPlan,
             max_output_tokens=context.snapshot.reserved_output_tokens,

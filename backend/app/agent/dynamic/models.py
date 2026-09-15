@@ -85,9 +85,13 @@ class AgentPlan(AgentContract):
     constraints: list[str] = Field(default_factory=list, max_length=8)
     steps: list[PlanStep] = Field(min_length=2, max_length=6)
     change_reason: str | None = Field(default=None, max_length=1_000)
+    applied_skill_id: str | None = None
+    applied_skill_version: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def validate_dag(self) -> Self:
+        if (self.applied_skill_id is None) != (self.applied_skill_version is None):
+            raise ValueError("Skill id and version must be selected together")
         ids = [step.id for step in self.steps]
         if len(ids) != len(set(ids)):
             raise ValueError("plan step ids must be unique")

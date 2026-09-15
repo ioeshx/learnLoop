@@ -30,6 +30,7 @@ from app.agent.dynamic.tools import ToolExecutor
 from app.agent.dynamic.verifier import DeterministicVerifier, apply_replan
 from app.agent.execution.models import AgentEvent, AgentRun
 from app.agent.execution.store import SqliteAgentRunStore
+from app.agent.experience import ReflectionSkillService, SkillRecall
 from app.agent.memory import MemoryService
 from app.application.services import DEFAULT_USER_ID
 
@@ -52,6 +53,7 @@ class DynamicAgentKernel:
         verifier: DeterministicVerifier,
         budget: RunBudget,
         memory: MemoryService | None = None,
+        experience: ReflectionSkillService | None = None,
         allow_write_tools: bool = False,
         store_full_context: bool = False,
     ) -> None:
@@ -62,6 +64,7 @@ class DynamicAgentKernel:
         self.verifier = verifier
         self.default_budget = budget
         self.memory = memory
+        self.experience = experience
         self.allow_write_tools = allow_write_tools
         self.store_full_context = store_full_context
 
@@ -105,6 +108,13 @@ class DynamicAgentKernel:
             if refreshed.cancel_requested:
                 await self._save(state)
                 yield await self._terminate(run.run_id, "cancelled")
+                return
+            skill_error = await self._applied_skill_error(state)
+            if skill_error is not None:
+                await self._save(state)
+                yield await self._terminate(
+                    run.run_id, "verification_failed", skill_error
+                )
                 return
 
             ledger = BudgetLedger(state.budget, state.usage)
@@ -400,7 +410,9 @@ class DynamicAgentKernel:
             data={"call_id": bootstrap_call_id, **_tool_result_summary(bootstrap)},
         )
         if not bootstrap.succeeded or not isinstance(bootstrap.output, dict):
-            await self.store.set_status(run.run_id, "failed", terminal_reason="failed")
+            await self.store.set_status(
+                run.run_id, "failed", terminal_reason="failed"
+            )
             await self.store.append_event(
                 run.run_id,
                 "run_failed",
@@ -420,11 +432,48 @@ class DynamicAgentKernel:
             self.default_budget,
             ledger.usage,
         )
+        recalled: list[SkillRecall] = []
+        prior_failures = []
+        if self.experience is not None:
+            recalled = await self.experience.recall(
+                graph_kind=run.graph_kind,
+                objective=objective,
+                allowed_tools={item.name for item in tools},
+            )
+            for item in recalled:
+                await self.store.append_event(
+                    run.run_id,
+                    "skill_recalled",
+                    data={
+                        "skill_id": item.skill.id,
+                        "version": item.skill.version,
+                        "score": item.score,
+                        "matched_keywords": item.matched_keywords,
+                    },
+                )
+            prior_failures = await self.experience.recall_failures(
+                graph_kind=run.graph_kind,
+                objective=objective,
+            )
+            for reflection in prior_failures:
+                await self.store.append_event(
+                    run.run_id,
+                    "reflection_recalled",
+                    data={
+                        "reflection_id": reflection.id,
+                        "source_run_id": reflection.run_id,
+                        "evidence_sequences": [
+                            item.event_sequence for item in reflection.evidence
+                        ],
+                    },
+                )
         planner_context = self.context.compile_initial(
             planner_request,
             bootstrap.output,
             tools,
             max_plan_steps=min(6, self.default_budget.max_steps),
+            candidate_skills=[_skill_context(item) for item in recalled],
+            prior_reflections=[_reflection_context(item) for item in prior_failures],
         )
         await self._persist_context(planner_context, node="planner")
         try:
@@ -460,15 +509,17 @@ class DynamicAgentKernel:
             plan = _normalize_and_validate_plan(
                 planned.value, {item.name for item in tools}
             )
+            if self.experience is not None:
+                await self.experience.validate_and_start_usage(
+                    run.run_id, plan, recalled
+                )
         except ValueError as error:
             await self.store.append_event(
                 run.run_id,
                 "plan_rejected",
                 data={"reason": "plan_invariant_failed", "error": str(error)},
             )
-            await self.store.set_status(
-                run.run_id, "failed", terminal_reason="failed"
-            )
+            await self.store.set_status(run.run_id, "failed", terminal_reason="failed")
             return None
         bootstrap_observation = Observation(
             action_id="bootstrap",
@@ -746,9 +797,34 @@ class DynamicAgentKernel:
         """
 
         request = self.context.request_for(state, step, tools, purpose=purpose)
-        package = await self.context.compile(request, state, step, tools)
+        applied_skill: dict[str, object] | None = None
+        if self.experience is not None and state.plan.applied_skill_id is not None:
+            skill = await self.experience.get_skill(state.plan.applied_skill_id)
+            if skill is not None and skill.version == state.plan.applied_skill_version:
+                applied_skill = _skill_record_context(skill)
+        package = await self.context.compile(
+            request, state, step, tools, applied_skill=applied_skill
+        )
         event = await self._persist_context(package, node=step.id)
         return package, event
+
+    async def _applied_skill_error(
+        self, state: DynamicAgentState
+    ) -> str | None:
+        """Enforce the global kill switch on every Agent loop iteration."""
+
+        if state.plan.applied_skill_id is None:
+            return None
+        if self.experience is None or not self.experience.enabled:
+            return "Applied Skill Library is globally disabled"
+        skill = await self.experience.get_skill(state.plan.applied_skill_id)
+        if skill is None:
+            return "Applied Skill version is no longer available"
+        if skill.version != state.plan.applied_skill_version:
+            return "Applied Skill version changed"
+        if skill.status.value != "active":
+            return f"Applied Skill is {skill.status}"
+        return None
 
     async def _persist_context(
         self, package: ContextPackage, *, node: str
@@ -1071,3 +1147,46 @@ def _delegated_allocation(tool_name: str, result: ToolResult) -> int:
 
 def _optional_string(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _skill_context(recall: SkillRecall) -> dict[str, object]:
+    value = _skill_record_context(recall.skill)
+    value["recall_score"] = recall.score
+    value["matched_keywords"] = recall.matched_keywords
+    return value
+
+
+def _skill_record_context(skill: object) -> dict[str, object]:
+    """Project a Skill to procedural data safe for model Context."""
+
+    from app.agent.experience.models import SkillRecord
+
+    record = SkillRecord.model_validate(skill)
+    return {
+        "id": record.id,
+        "version": record.version,
+        "name": record.name,
+        "description": record.description,
+        "applicability": record.applicability.model_dump(mode="json"),
+        "prerequisites": record.prerequisites,
+        "steps": [item.model_dump(mode="json") for item in record.steps],
+        "risk": record.risk,
+        "source_run_ids": record.source_run_ids,
+    }
+
+
+def _reflection_context(reflection: object) -> dict[str, object]:
+    """Project failure experience with public evidence, never hidden reasoning."""
+
+    from app.agent.experience.models import RunReflection
+
+    record = RunReflection.model_validate(reflection)
+    return {
+        "id": record.id,
+        "source_run_id": record.run_id,
+        "problem_category": record.problem_category,
+        "root_causes": [item.model_dump(mode="json") for item in record.root_causes],
+        "improvements": [item.model_dump(mode="json") for item in record.improvements],
+        "evidence": [item.model_dump(mode="json") for item in record.evidence],
+        "applicability": record.applicability,
+    }
