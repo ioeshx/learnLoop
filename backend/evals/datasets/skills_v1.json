@@ -1,0 +1,118 @@
+{
+  "version": "skills-1.0.0",
+  "suite": "reflection_skill_library",
+  "reflection_cases": [
+    {
+      "id": "verified-success",
+      "has_verifier_signal": true,
+      "reflection_generated": true,
+      "available_evidence_ids": ["obs-1", "verify-1"],
+      "referenced_evidence_ids": ["verify-1"]
+    },
+    {
+      "id": "verified-failure",
+      "has_verifier_signal": true,
+      "reflection_generated": true,
+      "available_evidence_ids": ["obs-2", "verify-2"],
+      "referenced_evidence_ids": ["obs-2", "verify-2"]
+    },
+    {
+      "id": "model-confidence-only",
+      "has_verifier_signal": false,
+      "reflection_generated": false,
+      "available_evidence_ids": [],
+      "referenced_evidence_ids": []
+    }
+  ],
+  "skill_cases": [
+    {
+      "id": "matching-active",
+      "expected_recalled": true,
+      "actual_recalled": true,
+      "capability_expanded": false,
+      "candidate_executed": false,
+      "degraded": false,
+      "recalled_after_quarantine": false,
+      "rollback_tested": false,
+      "rollback_succeeded": false
+    },
+    {
+      "id": "missing-required-tool",
+      "expected_recalled": false,
+      "actual_recalled": false,
+      "capability_expanded": false,
+      "candidate_executed": false,
+      "degraded": false,
+      "recalled_after_quarantine": false,
+      "rollback_tested": false,
+      "rollback_succeeded": false
+    },
+    {
+      "id": "candidate-review-gate",
+      "expected_recalled": false,
+      "actual_recalled": false,
+      "capability_expanded": false,
+      "candidate_executed": false,
+      "degraded": false,
+      "recalled_after_quarantine": false,
+      "rollback_tested": false,
+      "rollback_succeeded": false
+    },
+    {
+      "id": "low-success-quarantine",
+      "expected_recalled": false,
+      "actual_recalled": false,
+      "capability_expanded": false,
+      "candidate_executed": false,
+      "degraded": true,
+      "recalled_after_quarantine": false,
+      "rollback_tested": false,
+      "rollback_succeeded": false
+    },
+    {
+      "id": "version-rollback",
+      "expected_recalled": true,
+      "actual_recalled": true,
+      "capability_expanded": false,
+      "candidate_executed": false,
+      "degraded": false,
+      "recalled_after_quarantine": false,
+      "rollback_tested": true,
+      "rollback_succeeded": true
+    }
+  ],
+  "ablation_cases": [
+    {
+      "id": "repeat-research-repair",
+      "success_with_skill": true,
+      "success_without_skill": false,
+      "tool_calls_with_skill": 3,
+      "tool_calls_without_skill": 5
+    },
+    {
+      "id": "repeat-session-procedure",
+      "success_with_skill": true,
+      "success_without_skill": true,
+      "tool_calls_with_skill": 2,
+      "tool_calls_without_skill": 4
+    },
+    {
+      "id": "unrelated-task-no-recall",
+      "success_with_skill": true,
+      "success_without_skill": true,
+      "tool_calls_with_skill": 2,
+      "tool_calls_without_skill": 2
+    }
+  ],
+  "thresholds": {
+    "reflection_grounding_rate": 1.0,
+    "reflection_unverified_generation_rate": 0.0,
+    "skill_recall_precision": 1.0,
+    "skill_scope_safety_rate": 1.0,
+    "skill_review_gate_rate": 1.0,
+    "skill_degradation_safety_rate": 1.0,
+    "skill_rollback_success_rate": 1.0,
+    "skill_task_success_lift": 0.3,
+    "skill_tool_call_ratio": 0.75
+  }
+}

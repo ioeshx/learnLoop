@@ -6,15 +6,12 @@ from pathlib import Path
 from evals.runner import run, write_report
 
 DATASET = Path(__file__).parents[1] / "evals" / "datasets" / "v1.json"
-MEMORY_DATASET = (
-    Path(__file__).parents[1] / "evals" / "datasets" / "memory_v1.json"
-)
-RESEARCH_DATASET = (
-    Path(__file__).parents[1] / "evals" / "datasets" / "research_v1.json"
-)
+MEMORY_DATASET = Path(__file__).parents[1] / "evals" / "datasets" / "memory_v1.json"
+RESEARCH_DATASET = Path(__file__).parents[1] / "evals" / "datasets" / "research_v1.json"
 DELEGATION_DATASET = (
     Path(__file__).parents[1] / "evals" / "datasets" / "delegation_v1.json"
 )
+SKILLS_DATASET = Path(__file__).parents[1] / "evals" / "datasets" / "skills_v1.json"
 
 
 def test_v1_evaluation_dataset_meets_all_thresholds(tmp_path: Path) -> None:
@@ -69,3 +66,16 @@ def test_delegation_evaluation_dataset_meets_frozen_gates() -> None:
     assert values["subagent_duplicate_prevention_rate"] == 1.0
     assert values["subagent_fallback_rate"] == 1.0
     assert values["subagent_task_success_lift"] == 0.5
+
+
+def test_reflection_skill_evaluation_dataset_meets_frozen_gates() -> None:
+    report = run(SKILLS_DATASET, now=datetime(2026, 9, 17, tzinfo=UTC))
+    values = {metric["name"]: metric["value"] for metric in report.metrics}
+
+    assert report.dataset_version == "skills-1.0.0"
+    assert report.passed is True
+    assert values["reflection_grounding_rate"] == 1.0
+    assert values["reflection_unverified_generation_rate"] == 0.0
+    assert values["skill_scope_safety_rate"] == 1.0
+    assert values["skill_task_success_lift"] == 0.333333
+    assert values["skill_tool_call_ratio"] == 0.636364

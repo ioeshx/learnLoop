@@ -37,6 +37,8 @@ def evaluate(dataset: dict[str, Any]) -> list[Metric]:
         return _evaluate_research(dataset)
     if dataset.get("suite") == "subagent_delegation":
         return _evaluate_delegation(dataset)
+    if dataset.get("suite") == "reflection_skill_library":
+        return _evaluate_reflection_skills(dataset)
     thresholds = dataset["thresholds"]
     retrieval = dataset["retrieval"]
     usage = dataset["model_usage"]
@@ -150,8 +152,7 @@ def _evaluate_memory(dataset: dict[str, Any]) -> list[Metric]:
         Metric(
             "memory_write_safety_rate",
             sum(
-                case["actual_status"] == case["expected_status"]
-                for case in write_cases
+                case["actual_status"] == case["expected_status"] for case in write_cases
             )
             / len(write_cases),
             float(thresholds["memory_write_safety_rate"]),
@@ -307,9 +308,83 @@ def _evaluate_delegation(dataset: dict[str, Any]) -> list[Metric]:
     ]
 
 
-def _rate_metric(
-    name: str, outcomes: list[bool], thresholds: dict[str, Any]
-) -> Metric:
+def _evaluate_reflection_skills(dataset: dict[str, Any]) -> list[Metric]:
+    """Evaluate provenance, governed recall, degradation, and ablation value."""
+
+    thresholds = dataset["thresholds"]
+    reflections = dataset["reflection_cases"]
+    skills = dataset["skill_cases"]
+    ablations = dataset["ablation_cases"]
+    verified = [case for case in reflections if case["has_verifier_signal"]]
+    unverified = [case for case in reflections if not case["has_verifier_signal"]]
+    total_without = sum(float(case["tool_calls_without_skill"]) for case in ablations)
+    return [
+        _rate_metric(
+            "reflection_grounding_rate",
+            [
+                set(case["referenced_evidence_ids"]).issubset(
+                    set(case["available_evidence_ids"])
+                )
+                for case in verified
+            ],
+            thresholds,
+        ),
+        Metric(
+            "reflection_unverified_generation_rate",
+            sum(bool(case["reflection_generated"]) for case in unverified)
+            / len(unverified),
+            float(thresholds["reflection_unverified_generation_rate"]),
+            higher_is_better=False,
+        ),
+        _rate_metric(
+            "skill_recall_precision",
+            [case["actual_recalled"] == case["expected_recalled"] for case in skills],
+            thresholds,
+        ),
+        _rate_metric(
+            "skill_scope_safety_rate",
+            [not case["capability_expanded"] for case in skills],
+            thresholds,
+        ),
+        _rate_metric(
+            "skill_review_gate_rate",
+            [not case["candidate_executed"] for case in skills],
+            thresholds,
+        ),
+        _rate_metric(
+            "skill_degradation_safety_rate",
+            [
+                not case["recalled_after_quarantine"]
+                for case in skills
+                if case["degraded"]
+            ],
+            thresholds,
+        ),
+        _rate_metric(
+            "skill_rollback_success_rate",
+            [case["rollback_succeeded"] for case in skills if case["rollback_tested"]],
+            thresholds,
+        ),
+        Metric(
+            "skill_task_success_lift",
+            (
+                sum(bool(case["success_with_skill"]) for case in ablations)
+                - sum(bool(case["success_without_skill"]) for case in ablations)
+            )
+            / len(ablations),
+            float(thresholds["skill_task_success_lift"]),
+        ),
+        Metric(
+            "skill_tool_call_ratio",
+            sum(float(case["tool_calls_with_skill"]) for case in ablations)
+            / total_without,
+            float(thresholds["skill_tool_call_ratio"]),
+            higher_is_better=False,
+        ),
+    ]
+
+
+def _rate_metric(name: str, outcomes: list[bool], thresholds: dict[str, Any]) -> Metric:
     return Metric(name, sum(outcomes) / len(outcomes), float(thresholds[name]))
 
 
