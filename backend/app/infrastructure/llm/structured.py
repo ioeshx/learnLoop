@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 
@@ -102,6 +103,7 @@ class StructuredModel:
             raise ValueError("output_type must match the prompt output schema")
 
         rendered = prompt.render(values)
+        route_affinity_key = str(uuid4())
         schema_json = json.dumps(
             output_type.model_json_schema(), ensure_ascii=False, separators=(",", ":")
         )
@@ -122,6 +124,7 @@ class StructuredModel:
                 prompt_version=prompt.version,
                 messages=messages,
                 max_output_tokens=max_output_tokens,
+                route_affinity_key=route_affinity_key,
             )
         )
         try:
@@ -146,6 +149,7 @@ class StructuredModel:
                     ),
                     max_output_tokens=max_output_tokens,
                     is_repair=True,
+                    route_affinity_key=route_affinity_key,
                 )
             )
             try:
