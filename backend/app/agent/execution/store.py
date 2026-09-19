@@ -21,6 +21,7 @@ from app.agent.execution.models import (
     TerminalReason,
     ToolCallTrace,
 )
+from app.agent.policy.models import PolicyDecision
 from app.infrastructure.llm.models import ModelCallObservation
 
 
@@ -294,6 +295,19 @@ class SqliteAgentRunStore:
                 report_json TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS learnloop_agent_policy_decisions (
+                decision_id TEXT PRIMARY KEY,
+                run_id TEXT,
+                request_fingerprint TEXT NOT NULL UNIQUE,
+                effect TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                decision_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES learnloop_agent_runs(run_id)
+                    ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS ix_agent_policy_run_created
+                ON learnloop_agent_policy_decisions (run_id, created_at);
             """
         )
         await self._connection.commit()
@@ -1276,6 +1290,72 @@ class SqliteAgentRunStore:
         rows = await cursor.fetchall()
         await cursor.close()
         return [str(row["report_json"]) for row in rows]
+
+    async def save_agent_policy_decision(
+        self, decision: PolicyDecision
+    ) -> bool:
+        """Append one metadata-only authorization decision idempotently."""
+
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                """
+                INSERT OR IGNORE INTO learnloop_agent_policy_decisions (
+                    decision_id, run_id, request_fingerprint, effect, reason,
+                    decision_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    decision.id,
+                    decision.run_id,
+                    decision.request_fingerprint,
+                    decision.effect,
+                    decision.reason,
+                    decision.model_dump_json(),
+                    decision.created_at.isoformat(),
+                ),
+            )
+            created = cursor.rowcount == 1
+            await cursor.close()
+            await self._connection.commit()
+            return created
+
+    async def get_agent_policy_decision_by_fingerprint(
+        self, request_fingerprint: str
+    ) -> str | None:
+        cursor = await self._connection.execute(
+            """
+            SELECT decision_json FROM learnloop_agent_policy_decisions
+            WHERE request_fingerprint = ?
+            """,
+            (request_fingerprint,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        return str(row["decision_json"]) if row is not None else None
+
+    async def list_agent_policy_decisions(
+        self, *, run_id: str | None = None, limit: int = 200
+    ) -> list[str]:
+        bounded = max(1, min(limit, 1_000))
+        if run_id is None:
+            cursor = await self._connection.execute(
+                """
+                SELECT decision_json FROM learnloop_agent_policy_decisions
+                ORDER BY created_at DESC LIMIT ?
+                """,
+                (bounded,),
+            )
+        else:
+            cursor = await self._connection.execute(
+                """
+                SELECT decision_json FROM learnloop_agent_policy_decisions
+                WHERE run_id = ? ORDER BY created_at DESC LIMIT ?
+                """,
+                (run_id, bounded),
+            )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [str(row["decision_json"]) for row in rows]
 
     async def set_status(
         self,

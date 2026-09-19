@@ -25,6 +25,20 @@ from app.agent.dynamic.models import (
     ToolRisk,
     ToolSpec,
 )
+from app.agent.policy import (
+    AgentPolicyService,
+    CapabilityGrant,
+    DataLabel,
+    DataSource,
+    IntegrityLevel,
+    PolicyAction,
+    PolicyEffect,
+    PolicyRequest,
+    PolicySubject,
+    Sensitivity,
+    TrustLevel,
+    join_labels,
+)
 from app.agent.research import ResearchTutor
 from app.agent.tools import LearningTools
 from app.application.errors import ApplicationError
@@ -112,6 +126,7 @@ class ToolRegistry:
         idempotent: bool = True,
         timeout_seconds: float = 10.0,
         max_result_chars: int = 8_000,
+        output_labels: list[DataLabel] | None = None,
     ) -> None:
         if name in self._definitions:
             raise ValueError(f"tool '{name}' is already registered")
@@ -125,6 +140,16 @@ class ToolRegistry:
             timeout_seconds=timeout_seconds,
             max_result_chars=max_result_chars,
             input_schema=input_type.model_json_schema(),
+            output_labels=output_labels
+            or [
+                DataLabel(
+                    source=DataSource.TOOL,
+                    source_ref=f"tool:{name}",
+                    trust=TrustLevel.VERIFIED,
+                    sensitivity=Sensitivity.INTERNAL,
+                    integrity=IntegrityLevel.VERIFIED,
+                )
+            ],
         )
         self._definitions[name] = ToolDefinition(spec, input_type, handler)
 
@@ -147,8 +172,14 @@ class ToolExecutor:
     重放仍得到同一个 key，而用户修改答案后 arguments 改变，会自然生成新的 key。
     """
 
-    def __init__(self, registry: ToolRegistry) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        *,
+        policy: AgentPolicyService | None = None,
+    ) -> None:
         self.registry = registry
+        self.policy = policy
 
     async def execute(
         self,
@@ -159,6 +190,9 @@ class ToolExecutor:
         run_id: str,
         plan_step_id: str,
         approved: bool = False,
+        subject: PolicySubject | None = None,
+        grants: list[CapabilityGrant] | None = None,
+        input_labels: list[DataLabel] | None = None,
     ) -> ToolResult:
         started = perf_counter()
         definition = self.registry.get(name)
@@ -176,7 +210,52 @@ class ToolExecutor:
                 "tool is outside the current Plan Step allowlist",
                 started,
             )
-        if definition.spec.approval_policy == ApprovalPolicy.ALWAYS and not approved:
+        labels = list(input_labels or [])
+        policy_decision_id: str | None = None
+        policy_effect: str | None = None
+        policy_reason: str | None = None
+        if self.policy is not None:
+            if subject is None:
+                return self._error(
+                    name,
+                    ToolErrorKind.PERMISSION_DENIED,
+                    "trusted Policy subject is required",
+                    started,
+                    labels=labels,
+                )
+            decision = await self.policy.decide(
+                PolicyRequest(
+                    subject=subject,
+                    action=PolicyAction.TOOL_EXECUTE,
+                    capability=f"tool:{name}",
+                    resource=f"run:{run_id}:step:{plan_step_id}:tool:{name}",
+                    risk=definition.spec.risk,
+                    read_only=definition.spec.read_only,
+                    approval_policy=definition.spec.approval_policy,
+                    approved=approved,
+                    labels=labels,
+                    grants=list(grants or []),
+                    request_ref=f"tool:{run_id}:{plan_step_id}:{name}",
+                )
+            )
+            policy_decision_id = decision.id
+            policy_effect = decision.effect
+            policy_reason = decision.reason
+            if decision.effect != PolicyEffect.ALLOW:
+                return self._error(
+                    name,
+                    ToolErrorKind.PERMISSION_DENIED,
+                    f"Policy {decision.effect}: {decision.reason}",
+                    started,
+                    labels=labels,
+                    policy_decision_id=decision.id,
+                    policy_effect=decision.effect,
+                    policy_reason=decision.reason,
+                )
+        elif (
+            definition.spec.approval_policy == ApprovalPolicy.ALWAYS
+            and not approved
+        ):
             return self._error(
                 name,
                 ToolErrorKind.PERMISSION_DENIED,
@@ -251,10 +330,19 @@ class ToolExecutor:
         output, truncated = _bounded_output(
             raw_output, definition.spec.max_result_chars
         )
+        output_label = join_labels(
+            [*definition.spec.output_labels, *labels],
+            source=DataSource.TOOL,
+            source_ref=f"tool-result:{name}:{invocation.idempotency_key}",
+        )
         return ToolResult(
             tool_name=name,
             succeeded=True,
             output=output,
+            data_labels=[output_label],
+            policy_decision_id=policy_decision_id,
+            policy_effect=policy_effect,
+            policy_reason=policy_reason,
             truncated=truncated,
             duration_ms=(perf_counter() - started) * 1_000,
         )
@@ -267,10 +355,18 @@ class ToolExecutor:
         started: float,
         *,
         retryable: bool = False,
+        labels: list[DataLabel] | None = None,
+        policy_decision_id: str | None = None,
+        policy_effect: str | None = None,
+        policy_reason: str | None = None,
     ) -> ToolResult:
         return ToolResult(
             tool_name=name,
             succeeded=False,
+            data_labels=list(labels or []),
+            policy_decision_id=policy_decision_id,
+            policy_effect=policy_effect,
+            policy_reason=policy_reason,
             error=ToolError(kind=kind, message=message[:2_000], retryable=retryable),
             duration_ms=(perf_counter() - started) * 1_000,
         )
@@ -405,6 +501,15 @@ def build_learning_tool_registry(
         input_type=ResourceSearchInput,
         handler=search,
         max_result_chars=12_000,
+        output_labels=[
+            DataLabel(
+                source=DataSource.RESOURCE,
+                source_ref="resource.search",
+                trust=TrustLevel.UNTRUSTED,
+                sensitivity=Sensitivity.PERSONAL,
+                integrity=IntegrityLevel.HASHED,
+            )
+        ],
     )
     if research is not None:
         registry.register(
@@ -416,6 +521,15 @@ def build_learning_tool_registry(
             input_type=ResearchInput,
             handler=ask_research,
             max_result_chars=20_000,
+            output_labels=[
+                DataLabel(
+                    source=DataSource.RESOURCE,
+                    source_ref="research.ask",
+                    trust=TrustLevel.UNTRUSTED,
+                    sensitivity=Sensitivity.PERSONAL,
+                    integrity=IntegrityLevel.HASHED,
+                )
+            ],
         )
     if delegation is not None:
         registry.register(
@@ -429,6 +543,15 @@ def build_learning_tool_registry(
             handler=delegate_research,
             timeout_seconds=min(120, delegation.deadline_seconds + 5),
             max_result_chars=20_000,
+            output_labels=[
+                DataLabel(
+                    source=DataSource.SUBAGENT,
+                    source_ref="delegate.research",
+                    trust=TrustLevel.UNTRUSTED,
+                    sensitivity=Sensitivity.PERSONAL,
+                    integrity=IntegrityLevel.HASHED,
+                )
+            ],
         )
     registry.register(
         name="exercise.get",

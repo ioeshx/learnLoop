@@ -55,6 +55,8 @@ EventKind = Literal[
     "policy_selected",
     "reward_recorded",
     "reward_matured",
+    "policy_evaluated",
+    "policy_denied",
 ]
 
 

@@ -25,6 +25,7 @@ from app.agent.dynamic.models import (
     ToolSpec,
 )
 from app.agent.memory.models import MemoryQuery, MemoryRecall
+from app.agent.policy import Sensitivity
 
 
 class ContextPurpose(StrEnum):
@@ -450,6 +451,16 @@ class ContextCompiler:
             if observation is None:
                 omitted.append(source_id)
                 continue
+            if any(
+                label.sensitivity == Sensitivity.SECRET
+                for label in observation.data_labels
+            ):
+                # ContextCompiler 是 Model boundary 的 PEP。即使 secret 只是
+                # optional recent Observation，也必须 fail closed，不能靠 Token
+                # eviction 的偶然顺序决定它是否泄露给 Provider。
+                raise ContextReferenceError(
+                    f"Observation {source_id} contains secret-labeled data"
+                )
             materialized = await self._materialize(
                 observation,
                 expected_run_id=state.run_id,
@@ -905,6 +916,7 @@ def _evidence_view(item: dict[str, object]) -> dict[str, object]:
         "summary": item["summary"],
         "data": item.get("data", {}),
         "artifact": item.get("artifact"),
+        "data_labels": item.get("data_labels", []),
         "created_at": item["created_at"],
     }
 

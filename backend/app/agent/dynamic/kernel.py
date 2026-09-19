@@ -34,6 +34,15 @@ from app.agent.experience import ReflectionSkillService, SkillRecall
 from app.agent.memory import MemoryService
 from app.agent.optimization import PolicyOptimizationService
 from app.agent.optimization.service import teaching_context
+from app.agent.policy import (
+    CapabilityGrant,
+    DataLabel,
+    DataSource,
+    IntegrityLevel,
+    PolicySubject,
+    Sensitivity,
+    TrustLevel,
+)
 from app.application.services import DEFAULT_USER_ID
 
 
@@ -609,6 +618,42 @@ class DynamicAgentKernel:
             allowed_tools=set(step.allowed_tools),
             run_id=run.run_id,
             plan_step_id=step.id,
+            subject=PolicySubject(
+                id=f"run:{run.run_id}:lead",
+                kind="lead_agent",
+                run_id=run.run_id,
+            ),
+            grants=[
+                CapabilityGrant(
+                    id=(
+                        f"plan:{run.run_id}:{state.plan.version}:"
+                        f"{step.id}:{tool_name}"
+                    ),
+                    subject_id=f"run:{run.run_id}:lead",
+                    capability=f"tool:{tool_name}",
+                    resource_pattern=(
+                        f"run:{run.run_id}:step:{step.id}:tool:{tool_name}"
+                    ),
+                    source=f"plan:{state.plan.version}:step:{step.id}",
+                )
+            ],
+            input_labels=[
+                DataLabel(
+                    source=DataSource.MODEL,
+                    source_ref=(
+                        f"model-action:{run.run_id}:{state.plan.version}:"
+                        f"{step.id}:{step.attempts}"
+                    ),
+                    trust=TrustLevel.UNTRUSTED,
+                    sensitivity=Sensitivity.INTERNAL,
+                    integrity=IntegrityLevel.UNVERIFIED,
+                ),
+                *[
+                    label
+                    for observation in state.observations
+                    for label in observation.data_labels
+                ],
+            ],
         )
         ledger.record_tool()
         delegated_allocation = _delegated_allocation(tool_name, result)
@@ -621,6 +666,10 @@ class DynamicAgentKernel:
                 result = ToolResult(
                     tool_name=tool_name,
                     succeeded=False,
+                    data_labels=result.data_labels,
+                    policy_decision_id=result.policy_decision_id,
+                    policy_effect=result.policy_effect,
+                    policy_reason=result.policy_reason,
                     error=ToolError(
                         kind=ToolErrorKind.PERMANENT,
                         message=allocation_decision.detail
@@ -650,11 +699,28 @@ class DynamicAgentKernel:
             data=await self._artifact_data(
                 run.run_id, "tool_result", result.output
             ),
+            data_labels=result.data_labels,
             error_kind=result.error.kind if result.error else None,
         )
         state = _append_observation(state, observation, succeeded=result.succeeded)
         state = state.model_copy(update={"usage": ledger.usage})
         await self._save(state)
+        if result.policy_decision_id is not None:
+            yield await self.store.append_event(
+                run.run_id,
+                (
+                    "policy_denied"
+                    if result.policy_effect != "allow"
+                    else "policy_evaluated"
+                ),
+                node=tool_name,
+                data={
+                    "decision_id": result.policy_decision_id,
+                    "effect": result.policy_effect,
+                    "reason": result.policy_reason,
+                    "capability": f"tool:{tool_name}",
+                },
+            )
         yield await self.store.append_event(
             run.run_id,
             "tool_completed",
@@ -1180,6 +1246,17 @@ def _observation_trace(observation: Observation) -> dict[str, object]:
         "succeeded": observation.succeeded,
         "summary": observation.summary,
         "data_keys": sorted(observation.data),
+        "data_labels": [
+            {
+                "id": item.id,
+                "source": item.source,
+                "trust": item.trust,
+                "sensitivity": item.sensitivity,
+                "integrity": item.integrity,
+                "injection_signals": item.injection_signals,
+            }
+            for item in observation.data_labels
+        ],
         "error_kind": observation.error_kind,
         "created_at": observation.created_at.isoformat(),
     }
@@ -1191,6 +1268,10 @@ def _tool_result_summary(result: ToolResult) -> dict[str, object]:
         "truncated": result.truncated,
         "output_type": type(result.output).__name__,
         "error_kind": result.error.kind if result.error else None,
+        "policy_decision_id": result.policy_decision_id,
+        "policy_effect": result.policy_effect,
+        "policy_reason": result.policy_reason,
+        "data_label_ids": [item.id for item in result.data_labels],
     }
 
 

@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     agent_policy_optimization_enabled: bool = False
     agent_policy_admin_enabled: bool = True
     agent_policy_expected_latency_ms: float = Field(default=30_000, gt=0)
+    agent_trust_policy_admin_enabled: bool = True
     embedding_provider: Literal["local", "openai_compatible"] = "local"
     embedding_model: str = "text-embedding-3-small"
     embedding_api_key: SecretStr | None = None

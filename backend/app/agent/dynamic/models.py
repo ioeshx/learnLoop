@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.agent.policy.models import DataLabel
+
 
 class AgentContract(BaseModel):
     """所有 Agent 边界对象的严格基类，禁止模型偷偷增加未审核字段。"""
@@ -202,6 +204,7 @@ class Observation(AgentContract):
     succeeded: bool
     summary: str = Field(min_length=1, max_length=4_000)
     data: dict[str, Any] = Field(default_factory=dict)
+    data_labels: list[DataLabel] = Field(default_factory=list, max_length=100)
     error_kind: ToolErrorKind | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -231,6 +234,10 @@ class ToolResult(AgentContract):
     tool_name: str
     succeeded: bool
     output: dict[str, Any] | list[Any] | None = None
+    data_labels: list[DataLabel] = Field(default_factory=list, max_length=100)
+    policy_decision_id: str | None = None
+    policy_effect: str | None = None
+    policy_reason: str | None = None
     error: ToolError | None = None
     truncated: bool = False
     duration_ms: float = Field(ge=0)
@@ -246,6 +253,7 @@ class ToolSpec(AgentContract):
     timeout_seconds: float = Field(default=10.0, gt=0, le=120)
     max_result_chars: int = Field(default=8_000, ge=256, le=100_000)
     input_schema: dict[str, Any]
+    output_labels: list[DataLabel] = Field(default_factory=list, max_length=20)
 
 
 class RunBudget(AgentContract):

@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from app.agent.dynamic.kernel import DynamicAgentKernel
     from app.agent.experience import ReflectionSkillService
     from app.agent.optimization import PolicyOptimizationService
+    from app.agent.policy import AgentPolicyService
     from app.agent.research import ResearchTutor
 
 _INITIAL = object()
@@ -68,6 +69,8 @@ class AgentRuntime:
     skill_admin_enabled: bool = False
     optimization: PolicyOptimizationService | None = None
     policy_admin_enabled: bool = False
+    agent_policy: AgentPolicyService | None = None
+    agent_policy_admin_enabled: bool = False
     _tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     _task_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -552,6 +555,7 @@ async def open_agent_runtime(
     from app.agent.experience import ReflectionSkillService
     from app.agent.memory import MemoryService
     from app.agent.optimization import PolicyOptimizationService
+    from app.agent.policy import AgentPolicyEngine, AgentPolicyService
 
     settings.ensure_runtime_directories()
     learning_tools = LearningTools(dependencies)
@@ -577,6 +581,7 @@ async def open_agent_runtime(
             expected_latency_ms=settings.agent_policy_expected_latency_ms,
         )
         await optimization_service.ensure_default_policy()
+        agent_policy_service = AgentPolicyService(AgentPolicyEngine(), run_store)
         delegation_service = (
             DelegationService(
                 store=run_store,
@@ -605,7 +610,8 @@ async def open_agent_runtime(
                     tools=ToolExecutor(
                         build_learning_tool_registry(
                             learning_tools, research_tutor, delegation_service
-                        )
+                        ),
+                        policy=agent_policy_service,
                     ),
                     context=ContextCompiler(
                         artifact_reader=run_store,
@@ -653,6 +659,8 @@ async def open_agent_runtime(
             skill_admin_enabled=settings.agent_skill_admin_enabled,
             optimization=optimization_service,
             policy_admin_enabled=settings.agent_policy_admin_enabled,
+            agent_policy=agent_policy_service,
+            agent_policy_admin_enabled=settings.agent_trust_policy_admin_enabled,
         )
         if model is not None:
             model.set_observer(run_store.record_model_call)
