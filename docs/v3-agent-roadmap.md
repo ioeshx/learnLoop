@@ -122,6 +122,8 @@ HTTP binding。
 - fault schedule 与 seed 必须可重放；
 - fixture 结果不能被描述为真实生产效果。
 
+实现与审查说明见 `v3-stage-21-agent-reliability.md`。
+
 ## 6. 依赖顺序
 
 ```text
