@@ -17,6 +17,7 @@
 - `v3-agent-roadmap.md`：Trust/Policy、Model Gateway、Agent Team 与 Reliability Lab 路线。
 - `v3-execution-plan.md`：v3 文件级实施、测试、数据、API、前端与完成审计方案。
 - `v3-stage-18-trust-policy-engine.md`：Stage 18 的 PDP/PEP、Capability Grant、taint lineage、审计与安全评测。
+- `v3-stage-19-model-gateway.md`：Stage 19 的 capability routing、fallback、circuit breaker、审计与门禁。
 - `architecture/`：系统、Agent、数据和运行时架构。
 - `adr/`：Architecture Decision Records。
 - `api/`：HTTP、SSE 和内部接口约定。

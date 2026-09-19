@@ -1,0 +1,79 @@
+{
+  "version": "model-gateway-1.0.0",
+  "suite": "model_gateway",
+  "thresholds": {
+    "model_gateway_route_accuracy": 1.0,
+    "model_gateway_capability_safety_rate": 1.0,
+    "model_gateway_retryable_recovery_rate": 1.0,
+    "model_gateway_non_retryable_fallback_rate": 0.0,
+    "model_gateway_preflight_block_rate": 1.0,
+    "model_gateway_repair_affinity_rate": 1.0,
+    "model_gateway_circuit_recovery_rate": 1.0
+  },
+  "route_cases": [
+    {
+      "id": "exact-json-route",
+      "failure_kind": "none",
+      "expected_provider": "json-primary",
+      "actual_provider": "json-primary",
+      "capability_downgraded": false,
+      "fallback_used": false,
+      "recovered": true,
+      "provider_invoked": true,
+      "repair_provider": "json-primary"
+    },
+    {
+      "id": "retryable-429-fallback",
+      "failure_kind": "retryable",
+      "expected_provider": "json-fallback",
+      "actual_provider": "json-fallback",
+      "capability_downgraded": false,
+      "fallback_used": true,
+      "recovered": true,
+      "provider_invoked": true,
+      "repair_provider": "json-fallback"
+    },
+    {
+      "id": "authentication-no-fallback",
+      "failure_kind": "non_retryable",
+      "expected_provider": null,
+      "actual_provider": null,
+      "capability_downgraded": false,
+      "fallback_used": false,
+      "recovered": false,
+      "provider_invoked": true,
+      "repair_provider": null
+    },
+    {
+      "id": "cost-preflight-block",
+      "failure_kind": "preflight",
+      "expected_provider": null,
+      "actual_provider": null,
+      "capability_downgraded": false,
+      "fallback_used": false,
+      "recovered": false,
+      "provider_invoked": false,
+      "repair_provider": null
+    },
+    {
+      "id": "residency-preflight-block",
+      "failure_kind": "preflight",
+      "expected_provider": null,
+      "actual_provider": null,
+      "capability_downgraded": false,
+      "fallback_used": false,
+      "recovered": false,
+      "provider_invoked": false,
+      "repair_provider": null
+    }
+  ],
+  "circuit_cases": [
+    {
+      "id": "open-half-open-close",
+      "opened_after_threshold": true,
+      "blocked_during_cooldown": true,
+      "single_half_open_probe": true,
+      "half_open_probe_succeeded": true
+    }
+  ]
+}

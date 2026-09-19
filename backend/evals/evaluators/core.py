@@ -43,6 +43,8 @@ def evaluate(dataset: dict[str, Any]) -> list[Metric]:
         return _evaluate_policy_optimization(dataset)
     if dataset.get("suite") == "agent_trust_policy":
         return _evaluate_agent_trust_policy(dataset)
+    if dataset.get("suite") == "model_gateway":
+        return _evaluate_model_gateway(dataset)
     thresholds = dataset["thresholds"]
     retrieval = dataset["retrieval"]
     usage = dataset["model_usage"]
@@ -541,6 +543,61 @@ def _evaluate_agent_trust_policy(dataset: dict[str, Any]) -> list[Metric]:
         _rate_metric(
             "agent_policy_replay_idempotency_rate",
             [case["decision_ids_match"] for case in audits],
+            thresholds,
+        ),
+    ]
+
+
+def _evaluate_model_gateway(dataset: dict[str, Any]) -> list[Metric]:
+    """Evaluate capability safety, bounded fallback, affinity and recovery."""
+
+    thresholds = dataset["thresholds"]
+    cases = dataset["route_cases"]
+    retryable = [case for case in cases if case["failure_kind"] == "retryable"]
+    non_retryable = [
+        case for case in cases if case["failure_kind"] == "non_retryable"
+    ]
+    preflight = [case for case in cases if case["failure_kind"] == "preflight"]
+    return [
+        _rate_metric(
+            "model_gateway_route_accuracy",
+            [case["actual_provider"] == case["expected_provider"] for case in cases],
+            thresholds,
+        ),
+        _rate_metric(
+            "model_gateway_capability_safety_rate",
+            [not case["capability_downgraded"] for case in cases],
+            thresholds,
+        ),
+        _rate_metric(
+            "model_gateway_retryable_recovery_rate",
+            [case["recovered"] for case in retryable],
+            thresholds,
+        ),
+        Metric(
+            "model_gateway_non_retryable_fallback_rate",
+            sum(bool(case["fallback_used"]) for case in non_retryable)
+            / len(non_retryable),
+            float(thresholds["model_gateway_non_retryable_fallback_rate"]),
+            higher_is_better=False,
+        ),
+        _rate_metric(
+            "model_gateway_preflight_block_rate",
+            [not case["provider_invoked"] for case in preflight],
+            thresholds,
+        ),
+        _rate_metric(
+            "model_gateway_repair_affinity_rate",
+            [
+                case["repair_provider"] == case["actual_provider"]
+                for case in cases
+                if case["repair_provider"] is not None
+            ],
+            thresholds,
+        ),
+        _rate_metric(
+            "model_gateway_circuit_recovery_rate",
+            [case["half_open_probe_succeeded"] for case in dataset["circuit_cases"]],
             thresholds,
         ),
     ]

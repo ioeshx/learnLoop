@@ -16,6 +16,9 @@ OPTIMIZATION_DATASET = (
     Path(__file__).parents[1] / "evals" / "datasets" / "optimization_v1.json"
 )
 POLICY_DATASET = Path(__file__).parents[1] / "evals" / "datasets" / "policy_v1.json"
+MODEL_GATEWAY_DATASET = (
+    Path(__file__).parents[1] / "evals" / "datasets" / "model_gateway_v1.json"
+)
 
 
 def test_v1_evaluation_dataset_meets_all_thresholds(tmp_path: Path) -> None:
@@ -112,3 +115,18 @@ def test_agent_trust_policy_dataset_meets_frozen_gates() -> None:
     assert values["agent_policy_taint_monotonicity_rate"] == 1.0
     assert values["agent_policy_secret_exposure_rate"] == 0.0
     assert values["agent_policy_audit_redaction_rate"] == 1.0
+
+
+def test_model_gateway_dataset_meets_frozen_gates() -> None:
+    report = run(MODEL_GATEWAY_DATASET, now=datetime(2026, 9, 19, tzinfo=UTC))
+    values = {metric["name"]: metric["value"] for metric in report.metrics}
+
+    assert report.dataset_version == "model-gateway-1.0.0"
+    assert report.passed is True
+    assert values["model_gateway_route_accuracy"] == 1.0
+    assert values["model_gateway_capability_safety_rate"] == 1.0
+    assert values["model_gateway_retryable_recovery_rate"] == 1.0
+    assert values["model_gateway_non_retryable_fallback_rate"] == 0.0
+    assert values["model_gateway_preflight_block_rate"] == 1.0
+    assert values["model_gateway_repair_affinity_rate"] == 1.0
+    assert values["model_gateway_circuit_recovery_rate"] == 1.0

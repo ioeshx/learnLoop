@@ -64,6 +64,8 @@ v2 回答“Agent 能否自主规划、使用工具、记忆、研究、委派�
 - repair call 与原调用保持同一 route，除非原 Provider circuit 已 open；
 - Model 输入和 route event 默认不记录敏感正文。
 
+实现与审查说明见 `v3-stage-19-model-gateway.md`。
+
 ## 4. Stage 20：General Agent Team Runtime
 
 ### 目标
