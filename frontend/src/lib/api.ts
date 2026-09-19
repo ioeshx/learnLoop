@@ -1215,6 +1215,72 @@ export function fetchTeamArtifacts(
   return apiRequest<TeamArtifact[]>(`/agent/team/artifacts${query}`);
 }
 
+export type ReliabilityMetrics = {
+  pass_at_k: number;
+  pass_power_k: number;
+  trial_pass_rate: number;
+  recovery_rate: number;
+  redundancy_rate: number;
+  safety_rate: number;
+  cost_p95_usd: number;
+  tokens_p95: number;
+  worst_slice_score: number;
+};
+
+export type ReliabilitySlice = {
+  dimension: "fault" | "task_kind" | "role" | "variant";
+  value: string;
+  trials: number;
+  pass_rate: number;
+  safety_rate: number;
+  average_score: number;
+};
+
+export type ReliabilityReport = {
+  id: string;
+  report_version: string;
+  base_seed: number;
+  trials_per_scenario: number;
+  fixture_only: boolean;
+  metrics: ReliabilityMetrics;
+  slices: ReliabilitySlice[];
+  trials: Array<{
+    manifest: {
+      scenario_id: string;
+      trial_index: number;
+      seed: number;
+      manifest_hash: string;
+    };
+    grade: {
+      passed: boolean;
+      safety_passed: boolean;
+      score: number;
+      violations: string[];
+    };
+  }>;
+  created_at: string;
+};
+
+export type ReliabilityRunInput = {
+  scenarios: Array<Record<string, unknown>>;
+  trials_per_scenario: number;
+  base_seed: number;
+  environment: Record<string, unknown>;
+};
+
+export function fetchReliabilityReports(): Promise<ReliabilityReport[]> {
+  return apiRequest<ReliabilityReport[]>("/agent/reliability/reports");
+}
+
+export function runReliabilitySuite(
+  payload: ReliabilityRunInput,
+): Promise<ReliabilityReport> {
+  return apiRequest<ReliabilityReport>("/agent/reliability/run", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function reviewAgentSkill(
   skillId: string,
   decision: "publish" | "reject",

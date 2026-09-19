@@ -13,6 +13,7 @@ from app.api.routes.model_gateway import router as model_gateway_router
 from app.api.routes.optimization import router as optimization_router
 from app.api.routes.plans import router as plans_router
 from app.api.routes.policies import router as policies_router
+from app.api.routes.reliability import router as reliability_router
 from app.api.routes.research import router as research_router
 from app.api.routes.resources import router as resources_router
 from app.api.routes.reviews import router as reviews_router
@@ -34,3 +35,4 @@ api_router.include_router(study_sessions_router, tags=["study sessions"])
 api_router.include_router(reviews_router, tags=["reviews"])
 api_router.include_router(resources_router, tags=["resources"])
 api_router.include_router(research_router, tags=["research tutor"])
+api_router.include_router(reliability_router, tags=["agent reliability"])

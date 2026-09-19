@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from app.agent.experience import ReflectionSkillService
     from app.agent.optimization import PolicyOptimizationService
     from app.agent.policy import AgentPolicyService
+    from app.agent.reliability import ReliabilityRunner
     from app.agent.research import ResearchTutor
     from app.agent.team import AgentTeamService
 
@@ -75,6 +76,9 @@ class AgentRuntime:
     agent_policy_admin_enabled: bool = False
     team: AgentTeamService | None = None
     team_admin_enabled: bool = False
+    reliability: ReliabilityRunner | None = None
+    reliability_admin_enabled: bool = False
+    reliability_max_trials_per_scenario: int = 20
     _tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     _task_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -623,6 +627,17 @@ async def open_agent_runtime(
                 max_children=settings.agent_team_max_children,
                 max_total_tokens=settings.agent_team_max_total_tokens,
             )
+        reliability_runner = None
+        if settings.agent_reliability_enabled:
+            from app.agent.reliability import (
+                ContractScenarioExecutor,
+                ReliabilityRunner,
+            )
+
+            reliability_runner = ReliabilityRunner(
+                ContractScenarioExecutor(),
+                observer=run_store.save_reliability_report,
+            )
         runtime = AgentRuntime(
             checkpointer=checkpointer,
             run_store=run_store,
@@ -694,6 +709,13 @@ async def open_agent_runtime(
             agent_policy_admin_enabled=settings.agent_trust_policy_admin_enabled,
             team=team_service,
             team_admin_enabled=settings.agent_team_admin_enabled,
+            reliability=reliability_runner,
+            reliability_admin_enabled=(
+                settings.agent_reliability_admin_enabled
+            ),
+            reliability_max_trials_per_scenario=(
+                settings.agent_reliability_max_trials_per_scenario
+            ),
         )
         if model is not None:
             model.set_observer(run_store.record_model_call)

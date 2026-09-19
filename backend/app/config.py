@@ -102,6 +102,11 @@ class Settings(BaseSettings):
     agent_team_max_children: int = Field(default=8, ge=1, le=64)
     agent_team_max_total_tokens: int = Field(default=12_000, ge=500, le=200_000)
     agent_team_deadline_seconds: float = Field(default=90, gt=0, le=3_600)
+    agent_reliability_enabled: bool = True
+    agent_reliability_admin_enabled: bool = True
+    agent_reliability_max_trials_per_scenario: int = Field(
+        default=20, ge=1, le=100
+    )
     embedding_provider: Literal["local", "openai_compatible"] = "local"
     embedding_model: str = "text-embedding-3-small"
     embedding_api_key: SecretStr | None = None

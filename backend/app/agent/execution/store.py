@@ -28,6 +28,7 @@ from app.infrastructure.llm.gateway import ModelRouteRecord, RouteOutcome
 from app.infrastructure.llm.models import ModelCallObservation
 
 if TYPE_CHECKING:
+    from app.agent.reliability import ReliabilityReport
     from app.agent.team.models import TeamArtifact, TeamTask
 
 
@@ -168,6 +169,29 @@ class SqliteAgentRunStore:
             );
             CREATE INDEX IF NOT EXISTS ix_learnloop_team_artifacts_parent_created
                 ON learnloop_team_artifacts (parent_run_id, created_at);
+            CREATE TABLE IF NOT EXISTS learnloop_reliability_reports (
+                report_id TEXT PRIMARY KEY,
+                report_version TEXT NOT NULL,
+                fixture_only INTEGER NOT NULL,
+                report_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS learnloop_reliability_trials (
+                report_id TEXT NOT NULL,
+                manifest_hash TEXT NOT NULL,
+                scenario_id TEXT NOT NULL,
+                trial_index INTEGER NOT NULL,
+                passed INTEGER NOT NULL,
+                safety_passed INTEGER NOT NULL,
+                trial_json TEXT NOT NULL,
+                PRIMARY KEY (report_id, manifest_hash),
+                FOREIGN KEY (report_id)
+                    REFERENCES learnloop_reliability_reports(report_id)
+                    ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS ix_learnloop_reliability_trials_scenario
+                ON learnloop_reliability_trials
+                (scenario_id, passed, safety_passed);
             CREATE TABLE IF NOT EXISTS learnloop_dynamic_agent_states (
                 run_id TEXT PRIMARY KEY,
                 state_json TEXT NOT NULL,
@@ -2136,6 +2160,66 @@ class SqliteAgentRunStore:
         rows = await cursor.fetchall()
         await cursor.close()
         return [str(row["artifact_json"]) for row in rows]
+
+    async def save_reliability_report(self, report: ReliabilityReport) -> None:
+        """Atomically persist a Report and its replayable Trial manifests."""
+
+        async with self._write_lock:
+            await self._connection.execute(
+                """
+                INSERT INTO learnloop_reliability_reports (
+                    report_id, report_version, fixture_only, report_json, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    report.id,
+                    report.report_version,
+                    int(report.fixture_only),
+                    report.model_dump_json(),
+                    report.created_at.isoformat(),
+                ),
+            )
+            await self._connection.executemany(
+                """
+                INSERT INTO learnloop_reliability_trials (
+                    report_id, manifest_hash, scenario_id, trial_index,
+                    passed, safety_passed, trial_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        report.id,
+                        trial.manifest.manifest_hash,
+                        trial.scenario.id,
+                        trial.manifest.trial_index,
+                        int(trial.grade.passed),
+                        int(trial.grade.safety_passed),
+                        trial.model_dump_json(),
+                    )
+                    for trial in report.trials
+                ],
+            )
+            await self._connection.commit()
+
+    async def get_reliability_report(self, report_id: str) -> str | None:
+        cursor = await self._connection.execute(
+            "SELECT report_json FROM learnloop_reliability_reports "
+            "WHERE report_id = ?",
+            (report_id,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        return str(row["report_json"]) if row is not None else None
+
+    async def list_reliability_reports(self, *, limit: int = 50) -> list[str]:
+        cursor = await self._connection.execute(
+            "SELECT report_json FROM learnloop_reliability_reports "
+            "ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [str(row["report_json"]) for row in rows]
 
     async def list_prompt_versions(self) -> list[dict[str, str]]:
         cursor = await self._connection.execute(
