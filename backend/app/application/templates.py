@@ -8,8 +8,8 @@ from app.domain.goals import LearningGoal
 from app.domain.knowledge import KnowledgeEdge, KnowledgeNode
 from app.domain.plans import StudyPlan
 
-# a fixed curriculum generator that produces a simple, deterministic curriculum for any learning goal
-# used for testing and as a fallback when LLM-generated content is not available
+
+# A fixed curriculum generator used by tests and as an offline LLM fallback.
 def build_fixed_curriculum(goal: LearningGoal, *, now: datetime) -> Curriculum:
     specs = (
         (

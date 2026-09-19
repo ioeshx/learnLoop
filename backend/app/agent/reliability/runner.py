@@ -8,7 +8,7 @@ import random
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from math import ceil
-from typing import Protocol
+from typing import Literal, Protocol, cast
 
 from app.agent.reliability.faults import FaultController, InjectedFault
 from app.agent.reliability.graders import ReliabilityGrader
@@ -278,7 +278,9 @@ def _slices(trials: list[ReliabilityTrial]) -> list[SliceMetric]:
             buckets[("fault", kind)].append(trial)
     return [
         SliceMetric(
-            dimension=dimension,  # type: ignore[arg-type]
+            dimension=cast(
+                Literal["fault", "task_kind", "role", "variant"], dimension
+            ),
             value=value,
             trials=len(items),
             pass_rate=sum(item.grade.passed for item in items) / len(items),
