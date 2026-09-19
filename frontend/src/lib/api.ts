@@ -284,6 +284,62 @@ export type AgentTrace = {
   policy_decisions: BanditDecision[];
   authorization_decisions: AgentPolicyDecision[];
   model_routes: ModelRouteRecord[];
+  team_tasks: TeamTask[];
+  team_artifacts: TeamArtifact[];
+};
+
+export type AgentCard = {
+  role_id: string;
+  version: string;
+  description: string;
+  capabilities: string[];
+  input_contract: string;
+  output_contract: string;
+  allowed_tools: string[];
+  risk: "low" | "medium" | "high";
+  read_only: boolean;
+};
+
+export type TeamTask = {
+  id: string;
+  parent_run_id: string;
+  plan_step_id: string;
+  task_key: string;
+  role_id: string;
+  objective: string;
+  dependency_keys: string[];
+  allocated_tokens: number;
+  status:
+    | "submitted"
+    | "running"
+    | "input_required"
+    | "completed"
+    | "failed"
+    | "cancelled";
+  policy_decision_id: string | null;
+  artifact_id: string | null;
+  used_tokens: number;
+  error_code: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+export type TeamArtifact = {
+  id: string;
+  task_id: string;
+  role_id: string;
+  sha256: string;
+  verified: boolean;
+  verifier_version: string;
+  policy_decision_id: string | null;
+  labels: Array<{
+    id: string;
+    trust: string;
+    sensitivity: string;
+    integrity: string;
+  }>;
+  created_at: string;
 };
 
 export type ModelProfile = {
@@ -1137,6 +1193,26 @@ export function fetchModelGatewayHealth(): Promise<ProviderHealth[]> {
 export function fetchModelRoutes(runId?: string): Promise<ModelRouteRecord[]> {
   const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
   return apiRequest<ModelRouteRecord[]>(`/agent/model-gateway/routes${query}`);
+}
+
+export function fetchTeamRoles(): Promise<AgentCard[]> {
+  return apiRequest<AgentCard[]>("/agent/team/roles");
+}
+
+export function fetchTeamTasks(parentRunId?: string): Promise<TeamTask[]> {
+  const query = parentRunId
+    ? `?parent_run_id=${encodeURIComponent(parentRunId)}`
+    : "";
+  return apiRequest<TeamTask[]>(`/agent/team/tasks${query}`);
+}
+
+export function fetchTeamArtifacts(
+  parentRunId?: string,
+): Promise<TeamArtifact[]> {
+  const query = parentRunId
+    ? `?parent_run_id=${encodeURIComponent(parentRunId)}`
+    : "";
+  return apiRequest<TeamArtifact[]>(`/agent/team/artifacts${query}`);
 }
 
 export function reviewAgentSkill(

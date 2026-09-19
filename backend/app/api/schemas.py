@@ -11,6 +11,7 @@ from app.agent.execution.models import ModelCallTrace, ToolCallTrace
 from app.agent.experience import RunReflection, SkillUsage
 from app.agent.optimization import BanditDecision, RewardRecord
 from app.agent.policy import PolicyDecision
+from app.agent.team import TeamArtifact, TeamTask
 from app.application.models import (
     AttemptResult,
     DueReview,
@@ -508,6 +509,8 @@ class AgentTraceResponse(BaseModel):
     policy_decisions: list[BanditDecision] = Field(default_factory=list)
     authorization_decisions: list[PolicyDecision] = Field(default_factory=list)
     model_routes: list[ModelRouteRecord] = Field(default_factory=list)
+    team_tasks: list[TeamTask] = Field(default_factory=list)
+    team_artifacts: list[TeamArtifact] = Field(default_factory=list)
 
 
 class ResumeAgentRunRequest(RequestModel):

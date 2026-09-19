@@ -22,6 +22,7 @@ from app.agent.experience import (
 )
 from app.agent.optimization import BanditDecision, RewardRecord
 from app.agent.policy import PolicyDecision
+from app.agent.team import TeamArtifact, TeamTask
 from app.api.dependencies import AgentRuntimeDep
 from app.api.schemas import (
     AgentEventResponse,
@@ -158,6 +159,12 @@ async def get_agent_trace(
     model_routes = await runtime.run_store.list_model_routes(
         run_id=run.run_id, limit=1_000
     )
+    team_tasks = await runtime.run_store.list_team_tasks(
+        parent_run_id=run.run_id, limit=1_000
+    )
+    team_artifacts = await runtime.run_store.list_team_artifacts(
+        parent_run_id=run.run_id, limit=1_000
+    )
     return AgentTraceResponse(
         run=AgentRunResponse.from_execution(run),
         events=[AgentEventResponse.from_execution(event) for event in events],
@@ -197,6 +204,10 @@ async def get_agent_trace(
         ],
         model_routes=[
             ModelRouteRecord.model_validate_json(item) for item in model_routes
+        ],
+        team_tasks=[TeamTask.model_validate_json(item) for item in team_tasks],
+        team_artifacts=[
+            TeamArtifact.model_validate_json(item) for item in team_artifacts
         ],
     )
 

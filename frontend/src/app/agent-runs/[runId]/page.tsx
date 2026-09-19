@@ -231,6 +231,32 @@ export default function AgentTracePage() {
             </section>
           ) : null}
 
+          {trace.team_tasks.length ? (
+            <section className="dashboard-card">
+              <p className="eyebrow">AGENT TEAM</p>
+              <h2>Task DAG & Artifacts</h2>
+              {trace.team_tasks.map((task) => {
+                const artifact = trace.team_artifacts.find(
+                  (item) => item.task_id === task.id,
+                );
+                return (
+                  <div className="trace-row" key={task.id}>
+                    <strong>
+                      {task.status} · {task.role_id} · {task.task_key}
+                    </strong>
+                    <span>
+                      deps {task.dependency_keys.join(", ") || "root"}
+                    </span>
+                    <small>
+                      tokens {task.used_tokens}/{task.allocated_tokens}
+                      {artifact ? ` · sha256 ${artifact.sha256.slice(0, 12)}` : ""}
+                    </small>
+                  </div>
+                );
+              })}
+            </section>
+          ) : null}
+
           {latestContext ? (
             <section className="dashboard-card">
               <p className="eyebrow">
