@@ -480,7 +480,7 @@ class DynamicAgentKernel:
                         ],
                     },
                 )
-        planner_context = self.context.compile_initial(
+        planner_context = await self.context.compile_initial(
             planner_request,
             bootstrap.output,
             tools,
@@ -963,6 +963,12 @@ class DynamicAgentKernel:
         self, package: ContextPackage, *, node: str
     ) -> AgentEvent:
         metadata = package.snapshot.model_dump(mode="json")
+        policy_value = package.values.get("policy")
+        authorization_decision_id = (
+            policy_value.get("authorization_decision_id")
+            if isinstance(policy_value, dict)
+            else None
+        )
         await self.store.save_context_snapshot(
             metadata,
             context_values=package.values if self.store_full_context else None,
@@ -982,6 +988,7 @@ class DynamicAgentKernel:
                 "tool_names": package.snapshot.tool_names,
                 "tokenizer_name": package.snapshot.tokenizer_name,
                 "exact_token_count": package.snapshot.exact_token_count,
+                "authorization_decision_id": authorization_decision_id,
             },
         )
         return event

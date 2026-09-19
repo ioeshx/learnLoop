@@ -25,7 +25,20 @@ from app.agent.dynamic.models import (
     ToolSpec,
 )
 from app.agent.memory.models import MemoryQuery, MemoryRecall
-from app.agent.policy import Sensitivity
+from app.agent.policy import (
+    AgentPolicyService,
+    CapabilityGrant,
+    DataLabel,
+    DataSource,
+    IntegrityLevel,
+    PolicyAction,
+    PolicyDecision,
+    PolicyEffect,
+    PolicyRequest,
+    PolicySubject,
+    Sensitivity,
+    TrustLevel,
+)
 
 
 class ContextPurpose(StrEnum):
@@ -197,6 +210,21 @@ def token_counter_for(provider: object | None) -> TokenCounter:
     return ConservativeTokenCounter()
 
 
+def _policy_context_view(
+    decision: PolicyDecision | None,
+) -> dict[str, object]:
+    """Expose authorization metadata without copying labels or protected values."""
+
+    if decision is None:
+        return {}
+    return {
+        "authorization_decision_id": decision.id,
+        "authorization_effect": decision.effect.value,
+        "authorization_reason": decision.reason.value,
+        "authorization_policy_version": decision.policy_version,
+    }
+
+
 class ContextCompiler:
     """Compile budgeted, provenance-preserving Context for one Agent decision.
 
@@ -220,6 +248,7 @@ class ContextCompiler:
         memory_enabled: bool = True,
         memory_limit: int = 6,
         memory_minimum_score: float = 0.24,
+        policy: AgentPolicyService | None = None,
     ) -> None:
         if max_context_tokens < 1_000:
             raise ValueError("max_context_tokens must be at least 1000")
@@ -243,6 +272,7 @@ class ContextCompiler:
         self.memory_enabled = memory_enabled
         self.memory_limit = memory_limit
         self.memory_minimum_score = memory_minimum_score
+        self.policy = policy
 
     def request_for(
         self,
@@ -302,7 +332,7 @@ class ContextCompiler:
             reserved_output_tokens=output_reserve,
         )
 
-    def compile_initial(
+    async def compile_initial(
         self,
         request: ContextRequest,
         initial_state: dict[str, object],
@@ -322,11 +352,25 @@ class ContextCompiler:
             for name in request.candidate_tool_names
             if name in available
         ]
+        decision = await self._authorize_model_context(
+            request,
+            labels=[
+                DataLabel(
+                    id=f"context:{request.run_id}:objective",
+                    source=DataSource.USER,
+                    source_ref=f"run:{request.run_id}:objective",
+                    trust=TrustLevel.USER_ASSERTED,
+                    sensitivity=Sensitivity.PERSONAL,
+                    integrity=IntegrityLevel.UNVERIFIED,
+                )
+            ],
+        )
         values: dict[str, object] = {
             "policy": {
                 "scope": "single_learning_session",
                 "untrusted_sources": True,
                 "tool_permissions_are_code_enforced": True,
+                **_policy_context_view(decision),
             },
             "objective": request.objective,
             "initial_state": initial_state,
@@ -451,7 +495,7 @@ class ContextCompiler:
             if observation is None:
                 omitted.append(source_id)
                 continue
-            if any(
+            if self.policy is None and any(
                 label.sensitivity == Sensitivity.SECRET
                 for label in observation.data_labels
             ):
@@ -471,6 +515,38 @@ class ContextCompiler:
                 expired.append(source_id)
                 continue
             resolved.append(materialized)
+
+        memory_items = await self._retrieve_memory(request, state)
+        context_labels = [
+            DataLabel(
+                id=f"context:{request.run_id}:objective",
+                source=DataSource.USER,
+                source_ref=f"run:{request.run_id}:objective",
+                trust=TrustLevel.USER_ASSERTED,
+                sensitivity=Sensitivity.PERSONAL,
+                integrity=IntegrityLevel.UNVERIFIED,
+            ),
+            *[
+                label
+                for source_id in requested_ids
+                if (observation := observation_by_id.get(source_id)) is not None
+                for label in observation.data_labels
+            ],
+            *[
+                DataLabel(
+                    id=f"context:{request.run_id}:{item['id']}",
+                    source=DataSource.MEMORY,
+                    source_ref=str(item["id"]),
+                    trust=TrustLevel.USER_ASSERTED,
+                    sensitivity=Sensitivity.PERSONAL,
+                    integrity=IntegrityLevel.HASHED,
+                )
+                for item in memory_items
+            ],
+        ]
+        decision = await self._authorize_model_context(
+            request, labels=context_labels
+        )
 
         if expired:
             truncations.append(
@@ -502,6 +578,7 @@ class ContextCompiler:
                 "untrusted_sources": True,
                 "tool_permissions_are_code_enforced": True,
                 "hidden_reasoning_must_not_be_emitted": True,
+                **_policy_context_view(decision),
             },
             "objective": request.objective,
             "plan_version": request.plan_version,
@@ -540,7 +617,6 @@ class ContextCompiler:
                     )
                 )
 
-        memory_items = await self._retrieve_memory(request, state)
         memory_kept, memory_omitted = self._pack_items(
             values, "memory", memory_items, input_limit
         )
@@ -672,6 +748,65 @@ class ContextCompiler:
             coverage_end=max(timestamps) if timestamps else None,
         )
         return ContextPackage(values=values, snapshot=snapshot)
+
+    async def _authorize_model_context(
+        self,
+        request: ContextRequest,
+        *,
+        labels: list[DataLabel],
+    ) -> PolicyDecision | None:
+        """Authorize the exact Model boundary through the central PDP.
+
+        The grant is derived from trusted runtime state, while the model only sees
+        the resulting decision metadata. A stable resource and request reference
+        make retries idempotent in the append-only authorization ledger.
+        """
+
+        if self.policy is None:
+            return None
+        subject_id = f"run:{request.run_id}:lead"
+        resource = (
+            f"run:{request.run_id}:plan:{request.plan_version}:"
+            f"step:{request.step_id}:purpose:{request.purpose.value}"
+        )
+        decision = await self.policy.decide(
+            PolicyRequest(
+                subject=PolicySubject(
+                    id=subject_id,
+                    kind="lead_agent",
+                    run_id=request.run_id,
+                ),
+                action=PolicyAction.MODEL_CONTEXT,
+                capability="model:context",
+                resource=resource,
+                read_only=True,
+                labels=labels,
+                grants=[
+                    CapabilityGrant(
+                        id=(
+                            f"context:{request.run_id}:{request.plan_version}:"
+                            f"{request.step_id}:{request.purpose.value}"
+                        ),
+                        subject_id=subject_id,
+                        capability="model:context",
+                        resource_pattern=resource,
+                        source=(
+                            f"context-request:{request.plan_version}:"
+                            f"{request.step_id}"
+                        ),
+                    )
+                ],
+                request_ref=(
+                    f"context:{request.run_id}:{request.plan_version}:"
+                    f"{request.step_id}:{request.purpose.value}"
+                ),
+            )
+        )
+        if decision.effect != PolicyEffect.ALLOW:
+            raise ContextReferenceError(
+                f"Model Context denied by Policy: {decision.reason.value}"
+            )
+        return decision
 
     async def _retrieve_memory(
         self, request: ContextRequest, state: DynamicAgentState

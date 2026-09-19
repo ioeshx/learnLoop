@@ -630,6 +630,7 @@ async def open_agent_runtime(
                         memory_minimum_score=(
                             settings.agent_memory_minimum_score
                         ),
+                        policy=agent_policy_service,
                     ),
                     verifier=DeterministicVerifier(),
                     memory=memory_service,
