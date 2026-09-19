@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from app.agent.optimization import PolicyOptimizationService
     from app.agent.policy import AgentPolicyService
     from app.agent.research import ResearchTutor
+    from app.agent.team import AgentTeamService
 
 _INITIAL = object()
 logger = logging.getLogger(__name__)
@@ -72,6 +73,8 @@ class AgentRuntime:
     policy_admin_enabled: bool = False
     agent_policy: AgentPolicyService | None = None
     agent_policy_admin_enabled: bool = False
+    team: AgentTeamService | None = None
+    team_admin_enabled: bool = False
     _tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     _task_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -596,6 +599,30 @@ async def open_agent_runtime(
             if research_tutor is not None
             else None
         )
+        team_service = None
+        if settings.agent_team_enabled and delegation_service is not None:
+            from app.agent.team import (
+                AgentTeamService,
+                EvaluatorRoleAdapter,
+                ResearcherRoleAdapter,
+                RoleRegistry,
+            )
+
+            role_registry = RoleRegistry()
+            role_registry.register(ResearcherRoleAdapter(delegation_service))
+            role_registry.register(EvaluatorRoleAdapter())
+            team_service = AgentTeamService(
+                store=run_store,
+                registry=role_registry,
+                policy=agent_policy_service,
+                default_task_tokens=settings.agent_delegation_max_tokens,
+                deadline_seconds=settings.agent_team_deadline_seconds,
+                max_parallel_children=(
+                    settings.agent_team_max_parallel_children
+                ),
+                max_children=settings.agent_team_max_children,
+                max_total_tokens=settings.agent_team_max_total_tokens,
+            )
         runtime = AgentRuntime(
             checkpointer=checkpointer,
             run_store=run_store,
@@ -610,7 +637,9 @@ async def open_agent_runtime(
                     policy=ModelAgentPolicy(model),
                     tools=ToolExecutor(
                         build_learning_tool_registry(
-                            learning_tools, research_tutor, delegation_service
+                            learning_tools,
+                            research_tutor,
+                            team_service or delegation_service,
                         ),
                         policy=agent_policy_service,
                     ),
@@ -663,6 +692,8 @@ async def open_agent_runtime(
             policy_admin_enabled=settings.agent_policy_admin_enabled,
             agent_policy=agent_policy_service,
             agent_policy_admin_enabled=settings.agent_trust_policy_admin_enabled,
+            team=team_service,
+            team_admin_enabled=settings.agent_team_admin_enabled,
         )
         if model is not None:
             model.set_observer(run_store.record_model_call)

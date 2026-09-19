@@ -1,11 +1,13 @@
 """SQLite registry for thread mappings and replayable SSE events."""
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 import aiosqlite
@@ -25,6 +27,9 @@ from app.agent.policy.models import PolicyDecision
 from app.infrastructure.llm.gateway import ModelRouteRecord, RouteOutcome
 from app.infrastructure.llm.models import ModelCallObservation
 
+if TYPE_CHECKING:
+    from app.agent.team.models import TeamArtifact, TeamTask
+
 
 class SqliteAgentRunStore:
     def __init__(self, connection: aiosqlite.Connection) -> None:
@@ -32,7 +37,7 @@ class SqliteAgentRunStore:
         self._write_lock = asyncio.Lock()
 
     @classmethod
-    async def open(cls, path: Path) -> "SqliteAgentRunStore":
+    async def open(cls, path: Path) -> SqliteAgentRunStore:
         connection = await aiosqlite.connect(path.as_posix())
         connection.row_factory = aiosqlite.Row
         await connection.execute("PRAGMA foreign_keys = ON")
@@ -132,6 +137,37 @@ class SqliteAgentRunStore:
             );
             CREATE INDEX IF NOT EXISTS ix_learnloop_model_routes_run_created
                 ON learnloop_model_routes (run_id, created_at);
+            CREATE TABLE IF NOT EXISTS learnloop_team_tasks (
+                task_id TEXT PRIMARY KEY,
+                parent_run_id TEXT NOT NULL,
+                task_key TEXT NOT NULL,
+                role_id TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                status TEXT NOT NULL,
+                task_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (parent_run_id, fingerprint),
+                FOREIGN KEY (parent_run_id) REFERENCES learnloop_agent_runs(run_id)
+                    ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS ix_learnloop_team_tasks_parent_created
+                ON learnloop_team_tasks (parent_run_id, created_at);
+            CREATE TABLE IF NOT EXISTS learnloop_team_artifacts (
+                artifact_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL UNIQUE,
+                parent_run_id TEXT NOT NULL,
+                role_id TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                artifact_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (task_id) REFERENCES learnloop_team_tasks(task_id)
+                    ON DELETE CASCADE,
+                FOREIGN KEY (parent_run_id) REFERENCES learnloop_agent_runs(run_id)
+                    ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS ix_learnloop_team_artifacts_parent_created
+                ON learnloop_team_artifacts (parent_run_id, created_at);
             CREATE TABLE IF NOT EXISTS learnloop_dynamic_agent_states (
                 run_id TEXT PRIMARY KEY,
                 state_json TEXT NOT NULL,
@@ -1970,6 +2006,136 @@ class SqliteAgentRunStore:
         rows = await cursor.fetchall()
         await cursor.close()
         return [str(row["record_json"]) for row in rows]
+
+    async def create_team_task(self, task: TeamTask) -> bool:
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                """
+                INSERT OR IGNORE INTO learnloop_team_tasks (
+                    task_id, parent_run_id, task_key, role_id, fingerprint,
+                    status, task_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task.id,
+                    task.parent_run_id,
+                    task.task_key,
+                    task.role_id,
+                    task.fingerprint,
+                    task.status,
+                    task.model_dump_json(),
+                    task.created_at.isoformat(),
+                    task.created_at.isoformat(),
+                ),
+            )
+            created = cursor.rowcount == 1
+            await cursor.close()
+            await self._connection.commit()
+            return created
+
+    async def update_team_task(self, task: TeamTask) -> None:
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                """
+                UPDATE learnloop_team_tasks
+                SET status = ?, task_json = ?, updated_at = ?
+                WHERE task_id = ?
+                """,
+                (
+                    task.status,
+                    task.model_dump_json(),
+                    datetime.now(UTC).isoformat(),
+                    task.id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                await cursor.close()
+                raise KeyError(f"Team task '{task.id}' was not found")
+            await cursor.close()
+            await self._connection.commit()
+
+    async def find_team_task(
+        self, parent_run_id: str, fingerprint: str
+    ) -> str | None:
+        cursor = await self._connection.execute(
+            "SELECT task_json FROM learnloop_team_tasks "
+            "WHERE parent_run_id = ? AND fingerprint = ?",
+            (parent_run_id, fingerprint),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        return str(row["task_json"]) if row is not None else None
+
+    async def list_team_tasks(
+        self, *, parent_run_id: str | None = None, limit: int = 200
+    ) -> list[str]:
+        if parent_run_id is None:
+            cursor = await self._connection.execute(
+                "SELECT task_json FROM learnloop_team_tasks "
+                "ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+        else:
+            cursor = await self._connection.execute(
+                "SELECT task_json FROM learnloop_team_tasks "
+                "WHERE parent_run_id = ? ORDER BY created_at LIMIT ?",
+                (parent_run_id, limit),
+            )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [str(row["task_json"]) for row in rows]
+
+    async def save_team_artifact(
+        self, parent_run_id: str, artifact: TeamArtifact
+    ) -> None:
+        async with self._write_lock:
+            await self._connection.execute(
+                """
+                INSERT OR REPLACE INTO learnloop_team_artifacts (
+                    artifact_id, task_id, parent_run_id, role_id, sha256,
+                    artifact_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    artifact.id,
+                    artifact.task_id,
+                    parent_run_id,
+                    artifact.role_id,
+                    artifact.sha256,
+                    artifact.model_dump_json(),
+                    artifact.created_at.isoformat(),
+                ),
+            )
+            await self._connection.commit()
+
+    async def get_team_artifact(self, artifact_id: str) -> str | None:
+        cursor = await self._connection.execute(
+            "SELECT artifact_json FROM learnloop_team_artifacts "
+            "WHERE artifact_id = ?",
+            (artifact_id,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        return str(row["artifact_json"]) if row is not None else None
+
+    async def list_team_artifacts(
+        self, *, parent_run_id: str | None = None, limit: int = 200
+    ) -> list[str]:
+        if parent_run_id is None:
+            cursor = await self._connection.execute(
+                "SELECT artifact_json FROM learnloop_team_artifacts "
+                "ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+        else:
+            cursor = await self._connection.execute(
+                "SELECT artifact_json FROM learnloop_team_artifacts "
+                "WHERE parent_run_id = ? ORDER BY created_at LIMIT ?",
+                (parent_run_id, limit),
+            )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [str(row["artifact_json"]) for row in rows]
 
     async def list_prompt_versions(self) -> list[dict[str, str]]:
         cursor = await self._connection.execute(

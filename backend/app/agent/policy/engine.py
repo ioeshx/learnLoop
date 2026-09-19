@@ -46,6 +46,20 @@ class AgentPolicyEngine:
                     PolicyEffect.DENY,
                     PolicyReason.SECRET_TO_TOOL,
                 )
+            if request.action == PolicyAction.DELEGATE:
+                return self._decision(
+                    request,
+                    fingerprint,
+                    PolicyEffect.DENY,
+                    PolicyReason.SECRET_TO_SUBAGENT,
+                )
+            if request.action == PolicyAction.ARTIFACT_IMPORT:
+                return self._decision(
+                    request,
+                    fingerprint,
+                    PolicyEffect.DENY,
+                    PolicyReason.SECRET_ARTIFACT_IMPORT,
+                )
 
         injection_signals = {
             signal for label in request.labels for signal in label.injection_signals

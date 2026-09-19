@@ -115,6 +115,8 @@ class PolicyReason(StrEnum):
     DELEGATION_DEPTH_EXCEEDED = "delegation_depth_exceeded"
     SECRET_TO_MODEL = "secret_to_model"
     SECRET_TO_TOOL = "secret_to_tool"
+    SECRET_TO_SUBAGENT = "secret_to_subagent"
+    SECRET_ARTIFACT_IMPORT = "secret_artifact_import"
     INJECTION_TO_SIDE_EFFECT = "injection_to_side_effect"
     APPROVAL_REQUIRED = "approval_required"
     HIGH_RISK_REQUIRES_APPROVAL = "high_risk_requires_approval"

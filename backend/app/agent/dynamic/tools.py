@@ -8,13 +8,13 @@ import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agent.delegation import (
     DelegationExecutionError,
-    DelegationService,
+    DelegationResult,
     DelegationStatus,
 )
 from app.agent.dynamic.models import (
@@ -46,6 +46,14 @@ from app.application.errors import ApplicationError
 
 class ToolInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class ResearchDelegator(Protocol):
+    deadline_seconds: float
+
+    async def delegate_research(
+        self, *, parent_run_id: str, plan_step_id: str, objective: str
+    ) -> DelegationResult: ...
 
 
 class GoalStateInput(ToolInput):
@@ -375,7 +383,7 @@ class ToolExecutor:
 def build_learning_tool_registry(
     tools: LearningTools,
     research: ResearchTutor | None = None,
-    delegation: DelegationService | None = None,
+    delegation: ResearchDelegator | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry()
 

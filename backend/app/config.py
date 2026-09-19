@@ -96,6 +96,12 @@ class Settings(BaseSettings):
     agent_policy_admin_enabled: bool = True
     agent_policy_expected_latency_ms: float = Field(default=30_000, gt=0)
     agent_trust_policy_admin_enabled: bool = True
+    agent_team_enabled: bool = True
+    agent_team_admin_enabled: bool = True
+    agent_team_max_parallel_children: int = Field(default=2, ge=1, le=16)
+    agent_team_max_children: int = Field(default=8, ge=1, le=64)
+    agent_team_max_total_tokens: int = Field(default=12_000, ge=500, le=200_000)
+    agent_team_deadline_seconds: float = Field(default=90, gt=0, le=3_600)
     embedding_provider: Literal["local", "openai_compatible"] = "local"
     embedding_model: str = "text-embedding-3-small"
     embedding_api_key: SecretStr | None = None

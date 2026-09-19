@@ -61,6 +61,12 @@ EventKind = Literal[
     "model_fallback",
     "model_route_failed",
     "model_circuit_changed",
+    "team_task_submitted",
+    "team_task_started",
+    "team_task_failed",
+    "team_task_cancelled",
+    "team_artifact_verified",
+    "team_completed",
 ]
 
 
