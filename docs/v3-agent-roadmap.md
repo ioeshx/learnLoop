@@ -96,6 +96,8 @@ v2 回答“Agent 能否自主规划、使用工具、记忆、研究、委派�
 内部数据模型借鉴 A2A 的 Agent Card、Task、Message/Part 和 Artifact，但 v3 不宣称实现 A2A
 HTTP binding。
 
+实现与审查说明见 `v3-stage-20-agent-team.md`。
+
 ## 5. Stage 21：Agent Reliability Lab
 
 ### 目标

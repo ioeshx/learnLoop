@@ -45,6 +45,8 @@ def evaluate(dataset: dict[str, Any]) -> list[Metric]:
         return _evaluate_agent_trust_policy(dataset)
     if dataset.get("suite") == "model_gateway":
         return _evaluate_model_gateway(dataset)
+    if dataset.get("suite") == "agent_team":
+        return _evaluate_agent_team(dataset)
     thresholds = dataset["thresholds"]
     retrieval = dataset["retrieval"]
     usage = dataset["model_usage"]
@@ -599,6 +601,66 @@ def _evaluate_model_gateway(dataset: dict[str, Any]) -> list[Metric]:
             "model_gateway_circuit_recovery_rate",
             [case["half_open_probe_succeeded"] for case in dataset["circuit_cases"]],
             thresholds,
+        ),
+    ]
+
+
+def _evaluate_agent_team(dataset: dict[str, Any]) -> list[Metric]:
+    """Evaluate DAG scheduling, authority isolation and verified fan-in."""
+
+    thresholds = dataset["thresholds"]
+    cases = dataset["team_cases"]
+    duplicates = [case for case in cases if case["duplicate_attempts"] > 1]
+    cancelled = [case for case in cases if case["parent_cancelled"]]
+    return [
+        _rate_metric(
+            "agent_team_task_success_rate",
+            [case["actual_status"] == case["expected_status"] for case in cases],
+            thresholds,
+        ),
+        _rate_metric(
+            "agent_team_scope_safety_rate",
+            [not case["scope_escaped"] for case in cases],
+            thresholds,
+        ),
+        _rate_metric(
+            "agent_team_budget_safety_rate",
+            [not case["budget_exceeded"] for case in cases],
+            thresholds,
+        ),
+        _rate_metric(
+            "agent_team_parallel_bound_rate",
+            [
+                case["observed_parallel"] <= case["max_parallel"]
+                for case in cases
+            ],
+            thresholds,
+        ),
+        _rate_metric(
+            "agent_team_cancel_propagation_rate",
+            [case["children_cancelled"] for case in cancelled],
+            thresholds,
+        ),
+        _rate_metric(
+            "agent_team_duplicate_prevention_rate",
+            [case["adapter_calls"] == 1 for case in duplicates],
+            thresholds,
+        ),
+        _rate_metric(
+            "agent_team_artifact_verification_rate",
+            [
+                case["artifact_hash_valid"]
+                and case["artifact_policy_allowed"]
+                for case in cases
+                if case["artifact_created"]
+            ],
+            thresholds,
+        ),
+        Metric(
+            "agent_team_secret_delegation_rate",
+            sum(bool(case["secret_delegated"]) for case in cases) / len(cases),
+            float(thresholds["agent_team_secret_delegation_rate"]),
+            higher_is_better=False,
         ),
     ]
 

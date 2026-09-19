@@ -194,7 +194,9 @@ async def _lead(
             max_output_tokens=500,
             max_total_tokens=max_total_tokens,
         ),
-        usage=BudgetUsage(started_at=NOW, total_tokens=total_tokens),
+        # Run deadline is relative to test execution; evidence timestamps below
+        # remain frozen for deterministic provenance assertions.
+        usage=BudgetUsage(started_at=datetime.now(UTC), total_tokens=total_tokens),
     )
     await store.save_dynamic_state(run.run_id, state.model_dump_json())
     refreshed = await store.get(run.run_id)
