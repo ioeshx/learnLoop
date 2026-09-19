@@ -183,3 +183,31 @@ worst_slice_score  = min(score by fault/task/role slice)
 | 实现完整 | Stage 18–21 code/API/UI/eval/docs 与全量验证输出 |
 
 只有上表每项都有当前分支证据后，v3 目标才可标记完成。
+
+## 10. 实际完成审计（2026-09-19）
+
+v3 已在 `v3` 分支完成 Stage 18–21。实际提交按 capability、enforcement、operations、test/eval 和
+documentation 分组，而不是把整个版本压成一个不可审查的大提交。
+
+| Stage | 实际提交 | 交付证据 |
+| --- | --- | --- |
+| 规划 | `f68233a` | gap analysis、roadmap、file-level execution plan |
+| Stage 18 | `450b070`、`e90ccca`、`9c7729a`、`7086a56` | Policy contract、Tool/Context PEP、audit/API/UI、安全冻结集 |
+| Stage 19 | `49856ab`、`47f7166`、`d1423bc` | capability route、fallback/circuit、persistence/API/UI、fault gates |
+| Stage 20 | `b3596bb`、`f349bb8`、`14f99f7` | Team DAG、verified Artifact、operations console、scope/budget/cancel gates |
+| Stage 21 | `83fe006`、`fc44bcc`、`d0d304b` | seeded Trial、Fault injection、pass-k、API/UI、冻结评测、架构文档 |
+| 质量收口 | `d498078` | 正式 Ruff/Mypy scope 零错误 |
+
+最终验证：
+
+- 后端 Ruff：`app evals tests ../scripts/run_evals.py` 全通过；
+- 后端 Mypy：按仓库正式命令检查 `app evals ../scripts/run_evals.py`，191 个 source files 全通过；
+- 后端 Pytest：154 passed；
+- 前端 ESLint、TypeScript、Vitest、Next.js production build 全通过，12 个 test files / 19 tests；
+- Reliability 冻结集 10 项 gate 全通过：Replay/Fault coverage/Recovery/Safety 均为 1.0，
+  `pass@k=1.0`、`pass^k=0.5`、worst-slice `0.666667`；
+- 工作区未生成或提交本地 Eval Report，报告输出仍遵循 `.gitignore`。
+
+审计结论：v3 的 Trust/Policy、Model Gateway、Agent Team 和 Reliability Lab 已形成连续的 Agent
+control plane。默认 Reliability Executor 仍是明确标注的 fixture；remote A2A、真实 Provider chaos、
+process sandbox、multimodal 和在线训练不属于本版本完成声明。
