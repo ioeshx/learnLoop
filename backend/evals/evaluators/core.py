@@ -47,6 +47,8 @@ def evaluate(dataset: dict[str, Any]) -> list[Metric]:
         return _evaluate_model_gateway(dataset)
     if dataset.get("suite") == "agent_team":
         return _evaluate_agent_team(dataset)
+    if dataset.get("suite") == "agent_reliability":
+        return _evaluate_agent_reliability(dataset)
     thresholds = dataset["thresholds"]
     retrieval = dataset["retrieval"]
     usage = dataset["model_usage"]
@@ -661,6 +663,106 @@ def _evaluate_agent_team(dataset: dict[str, Any]) -> list[Metric]:
             sum(bool(case["secret_delegated"]) for case in cases) / len(cases),
             float(thresholds["agent_team_secret_delegation_rate"]),
             higher_is_better=False,
+        ),
+    ]
+
+
+def _evaluate_agent_reliability(dataset: dict[str, Any]) -> list[Metric]:
+    """Evaluate replay, stochastic success, recovery and non-compensable safety."""
+
+    thresholds = dataset["thresholds"]
+    trials = dataset["trial_cases"]
+    # 这里计算 observed pass-k，不使用 i.i.d. 解析估计；冻结集中的 Trial 顺序和
+    # outcome 都是 versioned evidence，适合 CI regression gate。
+    by_scenario: dict[str, list[dict[str, Any]]] = {}
+    for trial in trials:
+        by_scenario.setdefault(str(trial["scenario_id"]), []).append(trial)
+    required_faults = set(dataset["required_faults"])
+    observed_faults = {
+        str(fault)
+        for trial in trials
+        for fault in trial["injected_faults"]
+    }
+    injected = sum(len(trial["injected_faults"]) for trial in trials)
+    recovered = sum(len(trial["recovered_faults"]) for trial in trials)
+    actions = sum(int(trial["actions"]) for trial in trials)
+    duplicates = sum(int(trial["duplicates"]) for trial in trials)
+    slice_scores: dict[tuple[str, str], list[float]] = {}
+    # Multi-label Fault Trial 会进入所有对应 bucket，模拟一次执行同时经历多个
+    # failure mode 的情况；最终取 min 而不是总体平均值。
+    for trial in trials:
+        for dimension in ("fault_slice", "task_kind", "role", "variant"):
+            values = trial[dimension]
+            if not isinstance(values, list):
+                values = [values]
+            for value in values:
+                slice_scores.setdefault((dimension, str(value)), []).append(
+                    float(trial["score"])
+                )
+    worst_slice = min(
+        sum(scores) / len(scores) for scores in slice_scores.values()
+    )
+    return [
+        _rate_metric(
+            "reliability_manifest_replay_rate",
+            [
+                case["manifest_hash"] == case["replay_manifest_hash"]
+                for case in dataset["manifest_cases"]
+            ],
+            thresholds,
+        ),
+        Metric(
+            "reliability_fault_coverage_rate",
+            len(required_faults & observed_faults) / len(required_faults),
+            float(thresholds["reliability_fault_coverage_rate"]),
+        ),
+        Metric(
+            "reliability_pass_at_k",
+            sum(any(case["passed"] for case in group) for group in by_scenario.values())
+            / len(by_scenario),
+            float(thresholds["reliability_pass_at_k"]),
+        ),
+        Metric(
+            "reliability_pass_power_k",
+            sum(all(case["passed"] for case in group) for group in by_scenario.values())
+            / len(by_scenario),
+            float(thresholds["reliability_pass_power_k"]),
+        ),
+        Metric(
+            "reliability_recovery_rate",
+            recovered / injected,
+            float(thresholds["reliability_recovery_rate"]),
+        ),
+        _rate_metric(
+            "reliability_safety_gate_accuracy",
+            [
+                case["actual_passed"] == case["expected_passed"]
+                for case in dataset["safety_cases"]
+            ],
+            thresholds,
+        ),
+        Metric(
+            "reliability_redundancy_rate",
+            duplicates / actions,
+            float(thresholds["reliability_redundancy_rate"]),
+            higher_is_better=False,
+        ),
+        Metric(
+            "reliability_cost_p95_usd",
+            _percentile([float(case["cost_usd"]) for case in trials], 0.95),
+            float(thresholds["reliability_cost_p95_usd"]),
+            higher_is_better=False,
+        ),
+        Metric(
+            "reliability_tokens_p95",
+            _percentile([float(case["tokens"]) for case in trials], 0.95),
+            float(thresholds["reliability_tokens_p95"]),
+            higher_is_better=False,
+        ),
+        Metric(
+            "reliability_worst_slice_score",
+            worst_slice,
+            float(thresholds["reliability_worst_slice_score"]),
         ),
     ]
 

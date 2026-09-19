@@ -22,6 +22,9 @@ MODEL_GATEWAY_DATASET = (
 AGENT_TEAM_DATASET = (
     Path(__file__).parents[1] / "evals" / "datasets" / "agent_team_v1.json"
 )
+RELIABILITY_DATASET = (
+    Path(__file__).parents[1] / "evals" / "datasets" / "reliability_v1.json"
+)
 
 
 def test_v1_evaluation_dataset_meets_all_thresholds(tmp_path: Path) -> None:
@@ -149,3 +152,18 @@ def test_agent_team_dataset_meets_frozen_gates() -> None:
     assert values["agent_team_duplicate_prevention_rate"] == 1.0
     assert values["agent_team_artifact_verification_rate"] == 1.0
     assert values["agent_team_secret_delegation_rate"] == 0.0
+
+
+def test_agent_reliability_dataset_meets_frozen_gates() -> None:
+    report = run(RELIABILITY_DATASET, now=datetime(2026, 9, 19, tzinfo=UTC))
+    values = {metric["name"]: metric["value"] for metric in report.metrics}
+
+    assert report.dataset_version == "reliability-1.0.0"
+    assert report.passed is True
+    assert values["reliability_manifest_replay_rate"] == 1.0
+    assert values["reliability_fault_coverage_rate"] == 1.0
+    assert values["reliability_pass_at_k"] == 1.0
+    assert values["reliability_pass_power_k"] == 0.5
+    assert values["reliability_recovery_rate"] == 1.0
+    assert values["reliability_safety_gate_accuracy"] == 1.0
+    assert values["reliability_worst_slice_score"] == 0.666667
