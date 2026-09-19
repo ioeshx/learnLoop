@@ -31,6 +31,7 @@ from app.api.schemas import (
     ResumeAgentRunRequest,
     ToolCallTraceResponse,
 )
+from app.infrastructure.llm.gateway import ModelRouteRecord
 
 router = APIRouter(prefix="/agent")
 
@@ -154,6 +155,9 @@ async def get_agent_trace(
             run_id=run.run_id, limit=1_000
         )
     )
+    model_routes = await runtime.run_store.list_model_routes(
+        run_id=run.run_id, limit=1_000
+    )
     return AgentTraceResponse(
         run=AgentRunResponse.from_execution(run),
         events=[AgentEventResponse.from_execution(event) for event in events],
@@ -190,6 +194,9 @@ async def get_agent_trace(
         authorization_decisions=[
             PolicyDecision.model_validate_json(item)
             for item in authorization_decisions
+        ],
+        model_routes=[
+            ModelRouteRecord.model_validate_json(item) for item in model_routes
         ],
     )
 

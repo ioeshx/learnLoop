@@ -87,6 +87,9 @@ class CircuitBreakerPool:
     def snapshots(self) -> list[ProviderHealth]:
         return [item.model_copy(deep=True) for item in self._health.values()]
 
+    def snapshot(self, provider_id: str) -> ProviderHealth:
+        return self._health[provider_id].model_copy(deep=True)
+
 
 def _can_attempt(
     health: ProviderHealth, now: datetime, recovery: timedelta

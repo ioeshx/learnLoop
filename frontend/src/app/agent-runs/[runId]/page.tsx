@@ -210,6 +210,27 @@ export default function AgentTracePage() {
             </section>
           ) : null}
 
+          {trace.model_routes.length ? (
+            <section className="dashboard-card">
+              <p className="eyebrow">MODEL GATEWAY</p>
+              <h2>Route Decisions</h2>
+              {trace.model_routes.map((route) => (
+                <div className="trace-row" key={route.id}>
+                  <strong>
+                    {route.outcome} · {route.selected_provider_id ?? "no route"}
+                  </strong>
+                  <span>
+                    {route.prompt_name} · fallback {route.fallback_count}
+                  </span>
+                  <small>
+                    {route.attempts.map((item) => item.provider_id).join(" → ")}
+                    {" · "}estimated ${route.estimated_cost_usd.toFixed(6)}
+                  </small>
+                </div>
+              ))}
+            </section>
+          ) : null}
+
           {latestContext ? (
             <section className="dashboard-card">
               <p className="eyebrow">

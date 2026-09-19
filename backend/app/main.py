@@ -36,6 +36,11 @@ from app.infrastructure.llm import (
     ModelProvider,
     StructuredModel,
 )
+from app.infrastructure.llm.gateway import (
+    ModelCapability,
+    ModelGatewayProvider,
+    ModelProfile,
+)
 from app.infrastructure.parsers import SafeWebPageFetcher
 from app.infrastructure.rag import RagService
 from app.infrastructure.review import FsrsReviewScheduler
@@ -66,12 +71,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             api_key = resolved_settings.llm_api_key
             if api_key is None:
                 raise RuntimeError("validated DeepSeek API key is missing")
-            model_provider = DeepSeekModelProvider(
+            deepseek_provider = DeepSeekModelProvider(
                 api_key=api_key.get_secret_value(),
                 model=resolved_settings.llm_model,
                 base_url=resolved_settings.llm_base_url,
                 timeout_seconds=resolved_settings.llm_timeout_seconds,
                 max_retries=resolved_settings.llm_max_retries,
+            )
+            model_provider = (
+                ModelGatewayProvider(
+                    [
+                        (
+                            ModelProfile(
+                                provider_id="deepseek-primary",
+                                model=resolved_settings.llm_model,
+                                capabilities={ModelCapability.JSON_MODE},
+                                context_window=(
+                                    resolved_settings.llm_gateway_context_window
+                                ),
+                                max_output_tokens=(
+                                    resolved_settings.llm_gateway_max_output_tokens
+                                ),
+                                input_cost_per_million_usd=(
+                                    resolved_settings.llm_gateway_input_cost_per_million_usd
+                                ),
+                                output_cost_per_million_usd=(
+                                    resolved_settings.llm_gateway_output_cost_per_million_usd
+                                ),
+                                expected_latency_ms=(
+                                    resolved_settings.llm_gateway_expected_latency_ms
+                                ),
+                                data_residency=(
+                                    resolved_settings.llm_gateway_data_residency
+                                ),
+                            ),
+                            deepseek_provider,
+                        )
+                    ],
+                    failure_threshold=(
+                        resolved_settings.llm_gateway_failure_threshold
+                    ),
+                    recovery_seconds=(
+                        resolved_settings.llm_gateway_recovery_seconds
+                    ),
+                    default_deadline_ms=(
+                        resolved_settings.llm_gateway_deadline_ms
+                    ),
+                    default_max_estimated_cost_usd=(
+                        resolved_settings.llm_gateway_max_estimated_cost_usd
+                    ),
+                )
+                if resolved_settings.llm_gateway_enabled
+                else deepseek_provider
             )
             structured_model = StructuredModel(model_provider)
             curriculum_generator = LlmCurriculumGenerator(structured_model)

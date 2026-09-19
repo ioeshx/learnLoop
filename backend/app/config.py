@@ -43,6 +43,17 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.deepseek.com"
     llm_timeout_seconds: float = Field(default=60.0, gt=0, le=600)
     llm_max_retries: int = Field(default=2, ge=0, le=5)
+    llm_gateway_enabled: bool = True
+    llm_gateway_context_window: int = Field(default=64_000, ge=1_024)
+    llm_gateway_max_output_tokens: int = Field(default=8_192, ge=1)
+    llm_gateway_input_cost_per_million_usd: float = Field(default=0, ge=0)
+    llm_gateway_output_cost_per_million_usd: float = Field(default=0, ge=0)
+    llm_gateway_expected_latency_ms: float = Field(default=10_000, gt=0)
+    llm_gateway_data_residency: str = Field(default="unspecified", min_length=1)
+    llm_gateway_failure_threshold: int = Field(default=3, ge=1, le=20)
+    llm_gateway_recovery_seconds: float = Field(default=30, gt=0, le=3_600)
+    llm_gateway_deadline_ms: float = Field(default=60_000, gt=0, le=600_000)
+    llm_gateway_max_estimated_cost_usd: float | None = Field(default=None, ge=0)
     checkpoint_retention_days: int = Field(default=30, ge=1, le=3650)
     agent_dynamic_writes_enabled: bool = False
     agent_max_steps: int = Field(default=24, ge=2, le=200)
@@ -185,6 +196,10 @@ class Settings(BaseSettings):
             raise ValueError(
                 "agent_context_output_reserve_tokens must be less than "
                 "agent_context_tokens"
+            )
+        if self.llm_gateway_max_output_tokens > self.llm_gateway_context_window:
+            raise ValueError(
+                "llm_gateway_max_output_tokens cannot exceed context window"
             )
         return self
 

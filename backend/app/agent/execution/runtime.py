@@ -29,6 +29,7 @@ from app.agent.tools import LearningTools
 from app.application import ApplicationDependencies
 from app.config import Settings
 from app.infrastructure.llm import StructuredModel
+from app.infrastructure.llm.gateway import ModelGatewayProvider
 from app.observability import bind_agent_run, reset_agent_run
 
 if TYPE_CHECKING:
@@ -665,6 +666,8 @@ async def open_agent_runtime(
         )
         if model is not None:
             model.set_observer(run_store.record_model_call)
+            if isinstance(model.provider, ModelGatewayProvider):
+                model.provider.set_observer(run_store.save_model_route)
         await runtime.cleanup_expired()
         try:
             yield runtime
@@ -672,6 +675,8 @@ async def open_agent_runtime(
             await runtime.shutdown()
             if model is not None:
                 model.set_observer(None)
+                if isinstance(model.provider, ModelGatewayProvider):
+                    model.provider.set_observer(None)
             await run_store.close()
 
 

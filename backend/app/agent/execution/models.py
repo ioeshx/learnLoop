@@ -57,6 +57,10 @@ EventKind = Literal[
     "reward_matured",
     "policy_evaluated",
     "policy_denied",
+    "model_routed",
+    "model_fallback",
+    "model_route_failed",
+    "model_circuit_changed",
 ]
 
 

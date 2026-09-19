@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import Protocol
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class GatewayContract(BaseModel):
@@ -40,6 +40,7 @@ class RouteOutcome(StrEnum):
 
 
 class ModelProfile(GatewayContract):
+    profile_version: str = Field(default="1.0.0", pattern=r"^\d+\.\d+\.\d+$")
     provider_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{1,99}$")
     model: str = Field(min_length=1, max_length=200)
     capabilities: set[ModelCapability]
@@ -75,12 +76,6 @@ class RoutePlan(GatewayContract):
     candidates: list[RouteCandidate]
     rejected: dict[str, list[str]] = Field(default_factory=dict)
 
-    @model_validator(mode="after")
-    def require_candidate(self) -> RoutePlan:
-        if not self.candidates:
-            raise ValueError("no Model route satisfies the request")
-        return self
-
 
 class ProviderHealth(GatewayContract):
     provider_id: str
@@ -97,6 +92,8 @@ class RouteAttempt(GatewayContract):
     succeeded: bool
     duration_ms: float = Field(ge=0)
     error_type: str | None = None
+    circuit_state_before: CircuitState
+    circuit_state_after: CircuitState
 
 
 class ModelRouteRecord(GatewayContract):

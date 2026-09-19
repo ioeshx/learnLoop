@@ -22,6 +22,7 @@ from app.domain.goals import LearningGoal
 from app.domain.mastery import AdaptiveRecommendation
 from app.domain.resources import LearningResource, ResourceCitation
 from app.domain.review import ReviewSchedule
+from app.infrastructure.llm.gateway import ModelRouteRecord
 from app.workers import BackgroundJob
 
 
@@ -506,6 +507,7 @@ class AgentTraceResponse(BaseModel):
     reward: RewardRecord | None = None
     policy_decisions: list[BanditDecision] = Field(default_factory=list)
     authorization_decisions: list[PolicyDecision] = Field(default_factory=list)
+    model_routes: list[ModelRouteRecord] = Field(default_factory=list)
 
 
 class ResumeAgentRunRequest(RequestModel):

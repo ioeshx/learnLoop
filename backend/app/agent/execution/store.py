@@ -22,6 +22,7 @@ from app.agent.execution.models import (
     ToolCallTrace,
 )
 from app.agent.policy.models import PolicyDecision
+from app.infrastructure.llm.gateway import ModelRouteRecord, RouteOutcome
 from app.infrastructure.llm.models import ModelCallObservation
 
 
@@ -119,6 +120,18 @@ class SqliteAgentRunStore:
             );
             CREATE INDEX IF NOT EXISTS ix_learnloop_model_calls_run_created
                 ON learnloop_model_calls (run_id, created_at);
+            CREATE TABLE IF NOT EXISTS learnloop_model_routes (
+                route_id TEXT PRIMARY KEY,
+                run_id TEXT,
+                provider_id TEXT,
+                outcome TEXT NOT NULL,
+                record_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES learnloop_agent_runs(run_id)
+                    ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_learnloop_model_routes_run_created
+                ON learnloop_model_routes (run_id, created_at);
             CREATE TABLE IF NOT EXISTS learnloop_dynamic_agent_states (
                 run_id TEXT PRIMARY KEY,
                 state_json TEXT NOT NULL,
@@ -1876,6 +1889,87 @@ class SqliteAgentRunStore:
         rows = await cursor.fetchall()
         await cursor.close()
         return [_model_call_from_row(row) for row in rows]
+
+    async def save_model_route(self, record: ModelRouteRecord) -> None:
+        """Persist a metadata-only route before emitting its replayable Run event."""
+
+        async with self._write_lock:
+            await self._connection.execute(
+                """
+                INSERT OR IGNORE INTO learnloop_model_routes (
+                    route_id, run_id, provider_id, outcome, record_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.id,
+                    record.run_id,
+                    record.selected_provider_id,
+                    record.outcome,
+                    record.model_dump_json(),
+                    record.created_at.isoformat(),
+                ),
+            )
+            await self._connection.commit()
+        if record.run_id is not None:
+            event: EventKind = (
+                "model_fallback"
+                if record.fallback_count > 0
+                and record.outcome == RouteOutcome.SUCCEEDED
+                else (
+                    "model_routed"
+                    if record.outcome == RouteOutcome.SUCCEEDED
+                    else "model_route_failed"
+                )
+            )
+            await self.append_event(
+                record.run_id,
+                event,
+                node=record.prompt_name,
+                data={
+                    "route_id": record.id,
+                    "provider_id": record.selected_provider_id,
+                    "model": record.selected_model,
+                    "outcome": record.outcome,
+                    "fallback_count": record.fallback_count,
+                    "estimated_cost_usd": record.estimated_cost_usd,
+                    "attempted_provider_ids": [
+                        item.provider_id for item in record.attempts
+                    ],
+                },
+            )
+            for attempt in record.attempts:
+                if attempt.circuit_state_before == attempt.circuit_state_after:
+                    continue
+                await self.append_event(
+                    record.run_id,
+                    "model_circuit_changed",
+                    node=attempt.provider_id,
+                    data={
+                        "route_id": record.id,
+                        "provider_id": attempt.provider_id,
+                        "from": attempt.circuit_state_before,
+                        "to": attempt.circuit_state_after,
+                    },
+                )
+
+    async def list_model_routes(
+        self, *, run_id: str | None = None, limit: int = 200
+    ) -> list[str]:
+        if run_id is None:
+            cursor = await self._connection.execute(
+                "SELECT record_json FROM learnloop_model_routes "
+                "ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+        else:
+            cursor = await self._connection.execute(
+                "SELECT record_json FROM learnloop_model_routes "
+                "WHERE run_id = ? ORDER BY created_at LIMIT ?",
+                (run_id, limit),
+            )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [str(row["record_json"]) for row in rows]
 
     async def list_prompt_versions(self) -> list[dict[str, str]]:
         cursor = await self._connection.execute(

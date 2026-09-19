@@ -9,6 +9,7 @@ from time import perf_counter
 from app.infrastructure.llm.errors import ModelProviderError
 from app.infrastructure.llm.gateway.circuit import CircuitBreakerPool
 from app.infrastructure.llm.gateway.models import (
+    CircuitState,
     ModelCapability,
     ModelProfile,
     ModelRequirement,
@@ -86,13 +87,12 @@ class ModelGatewayProvider:
         )
         affinity_key = request.route_affinity_key
         preferred = self._affinity.get(affinity_key) if affinity_key else None
-        try:
-            plan = self.router.route(
-                requirement,
-                unavailable=self.breakers.unavailable(),
-                preferred_provider_id=preferred,
-            )
-        except ValueError as error:
+        plan = self.router.route(
+            requirement,
+            unavailable=self.breakers.unavailable(),
+            preferred_provider_id=preferred,
+        )
+        if not plan.candidates:
             record = ModelRouteRecord(
                 run_id=current_agent_run_id(),
                 prompt_name=request.prompt_name,
@@ -100,11 +100,14 @@ class ModelGatewayProvider:
                 requirement=requirement,
                 outcome=RouteOutcome.REJECTED,
                 attempts=[],
+                rejected=plan.rejected,
             )
             await self._observe(record)
             raise ModelProviderError(
-                str(error), provider=self.name, retryable=False
-            ) from error
+                "no Model route satisfies the request",
+                provider=self.name,
+                retryable=False,
+            )
 
         attempts: list[RouteAttempt] = []
         deadline_seconds = (requirement.deadline_ms or self.default_deadline_ms) / 1000
@@ -117,6 +120,7 @@ class ModelGatewayProvider:
             if remaining <= 0:
                 break
             attempt_started = perf_counter()
+            circuit_before = self.breakers.snapshot(candidate.provider_id).state
             try:
                 async with asyncio.timeout(remaining):
                     response = await self.providers[candidate.provider_id].complete(
@@ -135,6 +139,8 @@ class ModelGatewayProvider:
                         candidate.model,
                         wrapped,
                         attempt_started,
+                        circuit_before,
+                        self.breakers.snapshot(candidate.provider_id).state,
                     )
                 )
                 last_error: ModelProviderError = wrapped
@@ -149,6 +155,8 @@ class ModelGatewayProvider:
                         candidate.model,
                         error,
                         attempt_started,
+                        circuit_before,
+                        self.breakers.snapshot(candidate.provider_id).state,
                     )
                 )
                 last_error = error
@@ -173,6 +181,10 @@ class ModelGatewayProvider:
                     retryable=False,
                     succeeded=True,
                     duration_ms=(perf_counter() - attempt_started) * 1_000,
+                    circuit_state_before=circuit_before,
+                    circuit_state_after=self.breakers.snapshot(
+                        candidate.provider_id
+                    ).state,
                 )
             )
             if affinity_key:
@@ -265,6 +277,8 @@ def _failed_attempt(
     model: str,
     error: ModelProviderError,
     started: float,
+    circuit_state_before: CircuitState,
+    circuit_state_after: CircuitState,
 ) -> RouteAttempt:
     return RouteAttempt(
         provider_id=provider_id,
@@ -273,6 +287,8 @@ def _failed_attempt(
         succeeded=False,
         duration_ms=(perf_counter() - started) * 1_000,
         error_type=type(error).__name__,
+        circuit_state_before=circuit_state_before,
+        circuit_state_after=circuit_state_after,
     )
 
 

@@ -283,6 +283,55 @@ export type AgentTrace = {
   reward: RewardRecord | null;
   policy_decisions: BanditDecision[];
   authorization_decisions: AgentPolicyDecision[];
+  model_routes: ModelRouteRecord[];
+};
+
+export type ModelProfile = {
+  profile_version: string;
+  provider_id: string;
+  model: string;
+  capabilities: string[];
+  context_window: number;
+  max_output_tokens: number;
+  input_cost_per_million_usd: number;
+  output_cost_per_million_usd: number;
+  expected_latency_ms: number;
+  latency_class: "fast" | "standard" | "batch";
+  data_residency: string;
+  priority: number;
+  enabled: boolean;
+};
+
+export type ProviderHealth = {
+  provider_id: string;
+  state: "closed" | "open" | "half_open";
+  consecutive_failures: number;
+  opened_at: string | null;
+  half_open_probe_in_flight: boolean;
+};
+
+export type ModelRouteRecord = {
+  id: string;
+  run_id: string | null;
+  prompt_name: string;
+  prompt_version: string;
+  selected_provider_id: string | null;
+  selected_model: string | null;
+  outcome: "succeeded" | "failed" | "rejected";
+  attempts: {
+    provider_id: string;
+    model: string;
+    retryable: boolean;
+    succeeded: boolean;
+    duration_ms: number;
+    error_type: string | null;
+    circuit_state_before: "closed" | "open" | "half_open";
+    circuit_state_after: "closed" | "open" | "half_open";
+  }[];
+  rejected: Record<string, string[]>;
+  estimated_cost_usd: number;
+  fallback_count: number;
+  created_at: string;
 };
 
 export type AgentPolicyDecision = {
@@ -1075,6 +1124,19 @@ export function fetchAgentPolicyDecisions(
 ): Promise<AgentPolicyDecision[]> {
   const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
   return apiRequest<AgentPolicyDecision[]>(`/agent/policy/decisions${query}`);
+}
+
+export function fetchModelGatewayProfiles(): Promise<ModelProfile[]> {
+  return apiRequest<ModelProfile[]>("/agent/model-gateway/profiles");
+}
+
+export function fetchModelGatewayHealth(): Promise<ProviderHealth[]> {
+  return apiRequest<ProviderHealth[]>("/agent/model-gateway/health");
+}
+
+export function fetchModelRoutes(runId?: string): Promise<ModelRouteRecord[]> {
+  const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+  return apiRequest<ModelRouteRecord[]>(`/agent/model-gateway/routes${query}`);
 }
 
 export function reviewAgentSkill(
