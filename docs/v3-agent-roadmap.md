@@ -37,6 +37,8 @@ v2 回答“Agent 能否自主规划、使用工具、记忆、研究、委派�
 - Child Agent 的 Grant 必须是 Parent Grant 的真子集；
 - deny 决策不能被 Prompt、Skill、Policy Bandit 或 Reward 覆盖。
 
+实现与审查说明见 `v3-stage-18-trust-policy-engine.md`。
+
 ## 3. Stage 19：Model Gateway 与 Resilient Routing
 
 ### 目标

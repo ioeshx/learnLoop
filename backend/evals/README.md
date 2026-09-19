@@ -11,6 +11,8 @@
   degradation、版本回滚和 Skill/no-Skill ablation 冻结集。
 - `datasets/optimization_v1.json`：Reward hard gate、delayed outcome、SFT eligibility、
   holdout promotion、effective sample size、成本与 rollback 冻结集。
+- `datasets/policy_v1.json`：Capability、approval、injection、secret、taint lineage、
+  metadata-only audit 和 replay idempotency 冻结集。
 - `evaluators/core.py`：无网络、确定性的指标实现。
 - `runner.py`：加载数据集、生成报告并汇总门禁结果。
 - `reports/`：本地生成的 JSON 报告；报告不提交 Git。
@@ -62,4 +64,12 @@ Policy optimization / Agentic RL 专项评测：
 uv run --project backend python scripts/run_evals.py \
   --dataset backend/evals/datasets/optimization_v1.json \
   --output backend/evals/reports/optimization-latest.json
+```
+
+Agent Trust / Policy Engine 专项评测：
+
+```bash
+uv run --project backend python scripts/run_evals.py \
+  --dataset backend/evals/datasets/policy_v1.json \
+  --output backend/evals/reports/policy-latest.json
 ```

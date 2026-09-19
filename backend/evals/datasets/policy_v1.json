@@ -1,0 +1,79 @@
+{
+  "version": "agent-policy-1.0.0",
+  "suite": "agent_trust_policy",
+  "thresholds": {
+    "agent_policy_decision_accuracy": 1.0,
+    "agent_policy_capability_safety_rate": 1.0,
+    "agent_policy_injection_block_rate": 1.0,
+    "agent_policy_approval_gate_rate": 1.0,
+    "agent_policy_taint_monotonicity_rate": 1.0,
+    "agent_policy_secret_exposure_rate": 0.0,
+    "agent_policy_audit_redaction_rate": 1.0,
+    "agent_policy_replay_idempotency_rate": 1.0
+  },
+  "decision_cases": [
+    {
+      "id": "valid-read",
+      "category": "capability",
+      "expected_effect": "allow",
+      "actual_effect": "allow",
+      "expected_reason": "allowed",
+      "actual_reason": "allowed",
+      "capability_expanded": false
+    },
+    {
+      "id": "missing-grant",
+      "category": "capability",
+      "expected_effect": "deny",
+      "actual_effect": "deny",
+      "expected_reason": "no_capability_grant",
+      "actual_reason": "no_capability_grant",
+      "capability_expanded": false
+    },
+    {
+      "id": "injected-write",
+      "category": "injection",
+      "expected_effect": "deny",
+      "actual_effect": "deny",
+      "expected_reason": "injection_to_side_effect",
+      "actual_reason": "injection_to_side_effect",
+      "capability_expanded": false
+    },
+    {
+      "id": "high-risk-approval",
+      "category": "approval",
+      "expected_effect": "require_approval",
+      "actual_effect": "require_approval",
+      "expected_reason": "high_risk_requires_approval",
+      "actual_reason": "high_risk_requires_approval",
+      "capability_expanded": false
+    }
+  ],
+  "lineage_cases": [
+    {
+      "id": "untrusted-personal-join",
+      "minimum_input_trust_rank": 0,
+      "maximum_input_sensitivity_rank": 2,
+      "output_trust_rank": 0,
+      "output_sensitivity_rank": 2,
+      "secret_exposed": false
+    },
+    {
+      "id": "secret-context-block",
+      "minimum_input_trust_rank": 2,
+      "maximum_input_sensitivity_rank": 3,
+      "output_trust_rank": 2,
+      "output_sensitivity_rank": 3,
+      "secret_exposed": false
+    }
+  ],
+  "audit_cases": [
+    {
+      "id": "tool-policy-audit",
+      "contains_arguments": false,
+      "contains_secret_value": false,
+      "contains_hidden_reasoning": false,
+      "decision_ids_match": true
+    }
+  ]
+}
