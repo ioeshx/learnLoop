@@ -21,6 +21,7 @@ from app.agent.experience import (
     SkillUsage,
 )
 from app.agent.optimization import BanditDecision, RewardRecord
+from app.agent.policy import PolicyDecision
 from app.api.dependencies import AgentRuntimeDep
 from app.api.schemas import (
     AgentEventResponse,
@@ -148,6 +149,11 @@ async def get_agent_trace(
     policy_decisions = await runtime.run_store.list_bandit_decisions(
         run_id=run.run_id
     )
+    authorization_decisions = (
+        await runtime.run_store.list_agent_policy_decisions(
+            run_id=run.run_id, limit=1_000
+        )
+    )
     return AgentTraceResponse(
         run=AgentRunResponse.from_execution(run),
         events=[AgentEventResponse.from_execution(event) for event in events],
@@ -180,6 +186,10 @@ async def get_agent_trace(
         ),
         policy_decisions=[
             BanditDecision.model_validate_json(item) for item in policy_decisions
+        ],
+        authorization_decisions=[
+            PolicyDecision.model_validate_json(item)
+            for item in authorization_decisions
         ],
     )
 

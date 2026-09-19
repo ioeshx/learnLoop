@@ -282,6 +282,23 @@ export type AgentTrace = {
   skill_usage: SkillUsage | null;
   reward: RewardRecord | null;
   policy_decisions: BanditDecision[];
+  authorization_decisions: AgentPolicyDecision[];
+};
+
+export type AgentPolicyDecision = {
+  id: string;
+  policy_version: string;
+  effect: "allow" | "deny" | "require_approval";
+  reason: string;
+  request_fingerprint: string;
+  subject_id: string;
+  run_id: string | null;
+  action: "tool_execute" | "model_context" | "delegate" | "artifact_import";
+  capability: string;
+  resource: string;
+  matched_grant_id: string | null;
+  input_label_ids: string[];
+  created_at: string;
 };
 
 export type PolicyVersion = {
@@ -1051,6 +1068,13 @@ export function fetchPolicyExperiments(): Promise<ExperimentReport[]> {
 
 export function fetchFailureClusters(): Promise<FailureCluster[]> {
   return apiRequest<FailureCluster[]>("/agent/optimization/failure-clusters");
+}
+
+export function fetchAgentPolicyDecisions(
+  runId?: string,
+): Promise<AgentPolicyDecision[]> {
+  const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+  return apiRequest<AgentPolicyDecision[]>(`/agent/policy/decisions${query}`);
 }
 
 export function reviewAgentSkill(

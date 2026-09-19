@@ -10,6 +10,7 @@ from app.api.routes.jobs import router as jobs_router
 from app.api.routes.memories import router as memories_router
 from app.api.routes.optimization import router as optimization_router
 from app.api.routes.plans import router as plans_router
+from app.api.routes.policies import router as policies_router
 from app.api.routes.research import router as research_router
 from app.api.routes.resources import router as resources_router
 from app.api.routes.reviews import router as reviews_router
@@ -20,6 +21,7 @@ api_router.include_router(health_router, tags=["system"])
 api_router.include_router(jobs_router, tags=["background jobs"])
 api_router.include_router(agent_runs_router, tags=["agent runs"])
 api_router.include_router(optimization_router, tags=["agent optimization"])
+api_router.include_router(policies_router, tags=["agent policy"])
 api_router.include_router(memories_router, tags=["agent memory"])
 api_router.include_router(data_router, tags=["data"])
 api_router.include_router(goals_router, tags=["goals"])

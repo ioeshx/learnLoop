@@ -10,6 +10,7 @@ from app.agent.execution import AgentEvent, AgentRun
 from app.agent.execution.models import ModelCallTrace, ToolCallTrace
 from app.agent.experience import RunReflection, SkillUsage
 from app.agent.optimization import BanditDecision, RewardRecord
+from app.agent.policy import PolicyDecision
 from app.application.models import (
     AttemptResult,
     DueReview,
@@ -504,6 +505,7 @@ class AgentTraceResponse(BaseModel):
     skill_usage: SkillUsage | None = None
     reward: RewardRecord | None = None
     policy_decisions: list[BanditDecision] = Field(default_factory=list)
+    authorization_decisions: list[PolicyDecision] = Field(default_factory=list)
 
 
 class ResumeAgentRunRequest(RequestModel):

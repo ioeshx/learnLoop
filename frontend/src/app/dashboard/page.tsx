@@ -72,6 +72,7 @@ export default function DashboardPage() {
       <nav className="page-nav">
         <Link href="/">← 返回首页</Link>
         <div className="nav-actions">
+          <Link href="/agent-policy">Agent Policy</Link>
           <Link href="/agent-optimization">Policy Lab</Link>
           <Link href="/agent-skills">Agent Skills</Link>
           <Link href="/research">Research Tutor</Link>

@@ -189,6 +189,27 @@ export default function AgentTracePage() {
             </section>
           ) : null}
 
+          {trace.authorization_decisions.length ? (
+            <section className="dashboard-card">
+              <p className="eyebrow">TRUST / POLICY</p>
+              <h2>Authorization Decisions</h2>
+              {trace.authorization_decisions.map((decision) => (
+                <div className="trace-row" key={decision.id}>
+                  <strong>
+                    {decision.effect} · {decision.capability}
+                  </strong>
+                  <span>
+                    {decision.reason} · {decision.action}
+                  </span>
+                  <small>
+                    {decision.policy_version} · labels {decision.input_label_ids.length}
+                    {" · "}fingerprint {decision.request_fingerprint.slice(0, 12)}
+                  </small>
+                </div>
+              ))}
+            </section>
+          ) : null}
+
           {latestContext ? (
             <section className="dashboard-card">
               <p className="eyebrow">
