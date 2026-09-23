@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 
 import { PwaRegister } from "@/components/pwa-register";
 
@@ -8,6 +8,9 @@ export const metadata: Metadata = {
   title: "LearnLoop",
   description: "Local-first adaptive learning agent",
   manifest: "/manifest.webmanifest",
+};
+
+export const viewport: Viewport = {
   themeColor: "#246c50",
 };
 

@@ -1,15 +1,9 @@
 # LearnLoop
 
-LearnLoop 是一个本地优先、跨平台的自适应学习 Agent 项目。项目使用
-Next.js 提供 Web 界面，FastAPI 提供后端 API，并使用 SQLite 在本地保存学习目标、
-知识点、学习计划、练习、掌握度和复习计划。
+LearnLoop 是一个本地优先、跨平台的自适应学习 Agent 项目。项目支持导入 TXT、Markdown、PDF 或单个网页，基于本地资料学习、研究和复习，并查看 Agent 的执行轨迹、授权决策。
 
-当前代码覆盖阶段 1–21：v1 学习闭环、v2 动态 Agent，以及 v3 的 Trust/Policy、
-Model Gateway、Agent Team 和 Reliability Lab。可以导入 TXT、Markdown、PDF 或单个网页，
-基于本地资料学习、研究和复习，并查看 Agent 的执行轨迹、授权决策和评测报告。
+项目技术栈使用 Next.js 作为前端 ，FastAPI 提供后端 API，并使用 SQLite 在本地保存学习目标、知识点、学习计划、练习、掌握度和复习计划，默认无需模型api key也可运行固定学习流程。
 
-默认无需模型密钥即可运行固定学习流程；动态 Agent 需要启用 LLM。阶段编号表示开发路线，
-软件包与健康检查中的版本号目前仍为 `0.1.0`。
 
 ## 项目目录
 
@@ -97,12 +91,11 @@ LEARNLOOP_JOB_MAX_ATTEMPTS=3
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000/api/v1
 ```
 
-业务 SQLite 数据库和 RAG 索引默认创建在 `data/db/learnloop.db`，原始资料保存在
-`data/files/`，Agent Checkpoint 和可重放事件保存在 `data/db/checkpoints.db`。保持
-`LEARNLOOP_LLM_PROVIDER=none` 时不需要任何模型
-密钥，系统使用固定课程模板；每日学习 Agent 仍可运行，目标规划 Agent 需要启用模型。
+业务 SQLite 数据库和 RAG 索引默认创建在 `data/db/learnloop.db`，原始资料保存在`data/files/`，Agent Checkpoint 和可重放事件保存在 `data/db/checkpoints.db`。
 
-如需让 DeepSeek 生成知识图、计划、讲解和练习，在 `.env` 中配置：
+### Model Config
+
+配置Model请修改以下几个设置, 设置 `LEARNLOOP_LLM_PROVIDER=none` 时不需要任何模型Api Key，此时系统使用固定课程模板；每日学习功能仍可运行，目标规划功能需要配置Model。
 
 ```dotenv
 LEARNLOOP_LLM_PROVIDER=deepseek
@@ -113,10 +106,10 @@ LEARNLOOP_LLM_TIMEOUT_SECONDS=60
 LEARNLOOP_LLM_MAX_RETRIES=2
 ```
 
-模型生成在创建计划时发生。已生成过计划的目标会直接返回已有计划，不会重复调用
-模型。Embedding 默认使用完全离线的本地特征哈希实现。
+### Embedding Config
 
-如需使用兼容 OpenAI Embeddings 协议的远程服务，可配置：
+项目的 Embedding 配置如下，默认使用完全离线的local feature hashing实现。如需使用兼容 OpenAI Embeddings 协议的远程服务，可配置如下，使用远程 Embedding 时，导入的 Chunk 和检索文本会发送给配置的服务。保持 `local` 时
+所有资料和检索均留在本机。
 
 ```dotenv
 LEARNLOOP_EMBEDDING_PROVIDER=openai_compatible
@@ -126,8 +119,6 @@ LEARNLOOP_EMBEDDING_BASE_URL=https://api.openai.com/v1
 LEARNLOOP_EMBEDDING_DIMENSIONS=384
 ```
 
-使用远程 Embedding 时，导入的 Chunk 和检索文本会发送给配置的服务。保持 `local` 时
-所有资料和检索均留在本机。
 
 ### Agent 与 v3 配置
 
@@ -150,44 +141,45 @@ LEARNLOOP_EMBEDDING_DIMENSIONS=384
 | `LEARNLOOP_AGENT_RELIABILITY_ENABLED` | `true` | 离线 Reliability Runner |
 | `LEARNLOOP_AGENT_RELIABILITY_MAX_TRIALS_PER_SCENARIO` | `20` | API 单场景 Trial 上限 |
 
-Skill、Policy optimization、Trust Policy、Team 和 Reliability 的管理接口分别由
-`AGENT_SKILL_ADMIN_ENABLED`、`AGENT_POLICY_ADMIN_ENABLED`、`AGENT_TRUST_POLICY_ADMIN_ENABLED`、
-`AGENT_TEAM_ADMIN_ENABLED`、`AGENT_RELIABILITY_ADMIN_ENABLED` 控制；环境变量均需加
-`LEARNLOOP_` 前缀，示例配置默认开启。这些是功能开关，不是用户认证机制。
+Skill、Policy optimization、Trust Policy、Team 和 Reliability 的管理接口分别由以下接口控制,示例配置默认开启。
+* `LEARNLOOP_AGENT_SKILL_ADMIN_ENABLED`
+* `LEARNLOOP_AGENT_POLICY_ADMIN_ENABLED`
+* `LEARNLOOP_AGENT_TRUST_POLICY_ADMIN_ENABLED`
+* `LEARNLOOP_AGENT_TEAM_ADMIN_ENABLED`
+* `LEARNLOOP_AGENT_RELIABILITY_ADMIN_ENABLED` 
 
-Gateway 当前默认装配单个 DeepSeek Provider；多 Provider fallback 是框架能力，需要在代码中注册
-额外 Provider/Profile。成本单价默认是 `0`，需要填写实际部署单价后，estimated-cost 指标才有意义。
-示例模型名称来自仓库配置，使用时应按服务账户可用模型调整。远程 LLM 会接收编译到请求中的学习内容；
-本地 Embedding 并不意味着启用远程 LLM 后所有推理也在本机完成。
+
+
+注意：
+1. Gateway 当前默认装配单个 DeepSeek Provider；多 Provider fallback 是框架能力，需要在代码中注册额外 Provider/Profile。
+2. 成本单价默认是 `0`，需要填写实际部署单价后，estimated-cost 指标才有意义。
 
 ## 方式一：使用 uv 运行
 
 ### 1. 安装依赖
 
-安装后端依赖：
+安装后端依赖，在`backend`目录下执行：
 
 ```bash
 cd backend
 uv sync
-cd ..
 ```
 
-安装前端依赖：
+安装前端依赖，在`frontend`目录下执行：
 
 ```bash
 cd frontend
 corepack pnpm install
-cd ..
 ```
 
 ### 2. 初始化数据库
-
+在项目根目录下运行
 ```bash
 uv run --project backend python scripts/migrate.py upgrade
 ```
 
 该命令会创建 SQLite 数据库，并将数据库结构升级到最新 Alembic 版本。应用启动时
-不会自动执行迁移，因此首次启动和拉取到新迁移后都需要运行此命令。
+不会自动执行数据库迁移，因此首次启动和拉取新代码后都需要运行此命令。
 
 ### 3. 启动前后端
 
@@ -206,8 +198,6 @@ uv run --project backend python scripts/dev.py --backend-only
 # 只启动前端
 uv run --project backend python scripts/dev.py --frontend-only
 ```
-
-按 `Ctrl+C` 可以停止由脚本启动的服务。
 
 如果只需要执行一个排队任务，可运行：
 

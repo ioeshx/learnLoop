@@ -1,8 +1,7 @@
 # LearnLoop v2 Stage 11：Dynamic Agent Kernel 实现说明
 
 本文说明 Stage 11 的实际实现、架构、控制边界和代码阅读路径，重点描述 Agent 相关的高级
-技术，而不是重复产品页面或普通 CRUD。
-
+技术
 ## 1. 本阶段交付结果
 
 Stage 11 将 v1 中“模型只负责生成内容”的固定工作流，扩展为一个受控的动态单 Agent：
@@ -203,7 +202,7 @@ Artifact 和 source mapping 属于 Stage 12，当前实现没有越界假装完�
 
 > 后续状态：上述 Stage 11 最小实现已在 Stage 12 升级为完整 `ContextCompiler`，包括
 > Artifact、Compaction、Token partition 和 Context Snapshot。参见
-> [Stage 12 Context Engine 实现说明](stage-12-context-engine.md)。
+> [Stage 12 Context Engine 实现说明](v2-12-context-engine.md)。
 
 ## 5. Stage 11C：Verifier、Replanner、Interrupt 与写入
 
